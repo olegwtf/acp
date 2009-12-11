@@ -1,0 +1,23 @@
+#!/bin/bash
+
+die()
+{
+	echo "$1" >&2
+	exit 1;
+}
+
+[ -e 'acp' ] || die "file ./acp doesn't exists";
+
+if grep /usr/share/apps/acp/ acp >/dev/null
+then
+	sed -i 's!/usr/share/apps/acp/!lib/!' acp
+	echo '/usr/share/apps/acp/ --> lib/'
+elif grep lib/ acp >/dev/null
+then
+	sed -i 's!lib/!/usr/share/apps/acp/!' acp
+	echo 'lib/ --> /usr/share/apps/acp/'
+else
+	die "can't reconfigure acp"
+fi
+
+echo "done";

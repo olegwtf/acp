@@ -1,0 +1,684 @@
+#!/usr/bin/perl
+
+use strict;
+use utf8;
+use POSIX 'WNOHANG';
+
+use constant
+{
+	MSG_CHECK_LP    => 0,
+	MSG_GET_BAL     => 1,
+	MSG_TURN_ON     => 2,
+	MSG_TURN_OFF    => 3,
+	MSG_RELOAD_CONF => 4,
+	MSG_CHECK_UPD   => 5,
+	GLADE           => '/usr/share/apps/acp/acp.glade',
+	ICON_WAIT       => '/usr/share/apps/acp/acp_wait.png',
+	ICON_GREEN      => '/usr/share/apps/acp/acp_green.png',
+	ICON_BROWN      => '/usr/share/apps/acp/acp_brown.png',
+	ICON_GRAY       => '/usr/share/apps/acp/acp_gray.png',
+	ICON_MAIN       => '/usr/share/apps/acp/acp_main.ico',
+	CONFIG          => '/usr/share/apps/acp/acp.conf',
+	CONFIG_PL       => '/usr/share/apps/acp/config.pl',
+	ACP_VERSION     => 0.270,
+	ACP_SERVER      => 'http://prozer.at.nsu.ru/acp/get.php'
+};
+
+my $acp_path = "$ENV{HOME}/.acp";
+my $user     =  $ENV{USER};
+
+#ignore signals until fork success
+$SIG{ALRM} = $SIG{USR1} = 'IGNORE';
+
+#checking configuration in ~/
+mkdir $acp_path                                      or die "Can't create dir $acp_path"            unless -d  $acp_path;
+put_file("$acp_path/acp.conf",  get_file(CONFIG))    or die "Can't create file $acp_path/acp.conf"  unless -f "$acp_path/acp.conf";
+put_file("$acp_path/config.pl", get_file(CONFIG_PL)) or die "Can't create file $acp_path/config.pl" unless -f "$acp_path/config.pl";
+chmod(0600, "$acp_path/acp.conf")                    or die "Can't chmod file $acp_path/acp.conf"   unless (stat("$acp_path/acp.conf"))[2] == 33152;
+
+require "$acp_path/config.pl";
+require "$acp_path/acp.conf";
+
+our %config;
+$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
+
+#forking and open pipes to talk parent with child
+pipe(READER_PARENT, WRITER_CHILD);
+pipe(READER_CHILD, WRITER_PARENT);
+die "Can't fork" unless defined (my $child = fork);
+
+unless($child)
+{
+	#this is child process: background worker
+	require LWP::UserAgent;
+	require MIME::Base64;
+	require Encode;
+	
+	MIME::Base64->import('encode_base64');
+	Encode->import('decode');
+	
+	my $parent = getppid;
+	
+	#close unused pipe link
+	close WRITER_PARENT;
+	close READER_PARENT;
+	
+	$SIG{USR1} = sub
+	{
+		chomp(my $msg = <READER_CHILD>);
+		if($msg == MSG_CHECK_LP)
+		{	#check login and password
+			chomp(my $login = <READER_CHILD>);
+			chomp(my $passw = <READER_CHILD>);
+			syswrite WRITER_CHILD, MSG_CHECK_LP."\n".check_lp($login, $passw)."\n";
+			kill 'USR1', $parent;
+		}
+		elsif($msg == MSG_GET_BAL)
+		{	#check balance, redirect to ALRM handler
+			kill 'ALRM', $$;
+		}
+		elsif($msg == MSG_TURN_ON)
+		{	#turn on internet and update balance information
+			turn_inet(1);
+			kill 'ALRM', $$;
+		}
+		elsif($msg == MSG_TURN_OFF)
+		{	#turn off internet and update balance information
+			turn_inet(0);
+			kill 'ALRM', $$;
+		}
+		elsif($msg == MSG_RELOAD_CONF)
+		{	#reload configuration and update balance information
+			do "$acp_path/config.pl";
+			do "$acp_path/acp.conf";
+			$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
+			kill 'ALRM', $$;
+		}
+		elsif($msg == MSG_CHECK_UPD)
+		{	#check updates of config and program
+			chomp(my $what = <READER_CHILD>);
+			my $msg = '';
+			my ($acp, $conf, $user_act) = split '', $what;
+
+			my ($acp_v, $conf_v) = split(/__/, getpage(ACP_SERVER.'?cat=last'));
+	
+			unless($acp_v && $conf_v)
+			{
+				$msg = 'Сервер обновлений недоступен';
+			}
+			elsif($acp && $acp_v > ACP_VERSION)
+			{
+				$msg = "Доступна для скачивания ACP версии $acp_v";
+			}
+			elsif($conf && $conf_v > $config{version})
+			{
+				put_file("$acp_path/config.pl", getpage(ACP_SERVER.'?cat=last_config'));
+				do "$acp_path/config.pl";
+				$msg = "Конфиг обновлен до версии $conf_v";
+			}
+			elsif($user_act)
+			{
+				$msg = "Вы используете самую последнюю версию программы: $acp_v/$conf_v";
+			}
+			utf8::encode($msg);
+
+			syswrite WRITER_CHILD, MSG_CHECK_UPD."\n$msg\n";
+			kill 'USR1', $parent;
+		}
+	};
+	
+	$SIG{ALRM} = sub
+	{	#get statistics: balance, etc
+		syswrite WRITER_CHILD, MSG_GET_BAL."\n".join('|', get_stat())."\n";
+		kill 'USR1', $parent;
+		alarm $config{stat_refresh}*60;
+	};
+	
+	$SIG{USR2} = sub
+	{	#quit background worker
+		sleep 1;
+		exit;
+	};
+	
+	$SIG{INT} = $SIG{HUP} = $SIG{TERM} = 'IGNORE';
+
+	#wait until signal received, then wait again if previous signal was not USR2
+	sleep while 1;
+}
+
+#this is parent process: GUI
+close READER_CHILD;
+close WRITER_CHILD;
+$SIG{CHLD} = \&sig_chld;
+$SIG{USR1} = \&sig_usr1;
+
+$SIG{HUP} = $SIG{TERM} = $SIG{INT} = \&on_quit;
+
+require Gtk2::Notify;
+require Gtk2::GladeXML;
+
+Gtk2->init;
+Gtk2::Notify->init('XY');
+
+my $glade  = Gtk2::GladeXML->new(GLADE);
+$glade->signal_autoconnect_from_package('main');
+
+my $online = -1;
+my $click  =  0;
+my $upd    =  0;
+
+my $window = $glade->get_widget('window1');
+$window->set_icon_from_file(ICON_MAIN);
+
+my $l_entry = $glade->get_widget('entry1');
+$l_entry->set_text($config{login});
+
+my $p_entry = $glade->get_widget('entry2');
+$p_entry->set_text($config{password});
+
+my $s1_btn = $glade->get_widget('button1');
+my $s2_btn = $glade->get_widget('button2');
+
+my $stat_refr_spin = $glade->get_widget('spinbutton3');
+$stat_refr_spin->set_value($config{stat_refresh});
+
+my $do_log_check = $glade->get_widget('checkbutton3');
+$do_log_check->set_active($config{do_log});
+
+my $inet_autoen_check = $glade->get_widget('checkbutton4');
+$inet_autoen_check->set_active($config{inet_enable});
+
+my $inet_autodis_check = $glade->get_widget('checkbutton5');
+$inet_autodis_check->set_active($config{inet_disable});
+
+my $bal_notify_check = $glade->get_widget('checkbutton1');
+$bal_notify_check->set_active($config{bal_notify});
+
+my $bal_notify_spin = $glade->get_widget('spinbutton1');
+$bal_notify_spin->set_value($config{bal_notify_val});
+
+my $cred_notify_check = $glade->get_widget('checkbutton2');
+$cred_notify_check->set_active($config{cred_notify});
+
+my $cred_notify_spin = $glade->get_widget('spinbutton2');
+$cred_notify_spin->set_value($config{cred_notify_val});
+
+my $period_notify_spin = $glade->get_widget('spinbutton5');
+$period_notify_spin->set_value($config{period_notify});
+
+my $conf_upd_check = $glade->get_widget('checkbutton6');
+$conf_upd_check->set_active($config{conf_update});
+
+my $acp_upd_check = $glade->get_widget('checkbutton7');
+$acp_upd_check->set_active($config{acp_update});
+
+my $interv_upd_spin = $glade->get_widget('spinbutton4');
+$interv_upd_spin->set_value($config{int_update});
+
+my @holidays = map($glade->get_widget("checkbutton$_"), (8..14));
+$holidays[$_]->set_active($config{holidays}[$_]) for(0..6);
+
+my $tray_icon = Gtk2::StatusIcon->new_from_file(ICON_WAIT);
+$tray_icon->set_tooltip('Загружается...');
+$tray_icon->signal_connect(popup_menu => \&on_popup);
+$tray_icon->signal_connect(activate => \&on_click);
+
+my $menu = Gtk2::Menu->new;
+my $menu_opt = Gtk2::ImageMenuItem->new_from_stock('gtk-preferences');
+$menu_opt->signal_connect('activate' => \&on_show);
+$menu->append($menu_opt);
+$menu_opt = Gtk2::ImageMenuItem->new('Лог');
+$menu_opt->set_image(Gtk2::Image->new_from_stock('gtk-edit', 'menu'));
+$menu_opt->signal_connect('activate' => \&on_showlog);
+$menu->append($menu_opt);
+$menu_opt = Gtk2::ImageMenuItem->new('Обновления');
+$menu_opt->set_image(Gtk2::Image->new_from_stock('gtk-refresh', 'menu'));
+$menu_opt->signal_connect('activate' => \&on_checkupd, 1);
+$menu->append($menu_opt);
+$menu_opt = Gtk2::ImageMenuItem->new_from_stock('gtk-about');
+$menu_opt->signal_connect('activate' => \&on_about);
+$menu->append($menu_opt);
+$menu_opt = Gtk2::ImageMenuItem->new_from_stock('gtk-quit');
+$menu_opt->signal_connect('activate' => \&on_quit);
+$menu->append($menu_opt);
+
+my $notify = Gtk2::Notify->new('Academ.org Control Panel');
+$notify->set_timeout(10000);
+Glib::Timeout->add($config{int_update}*1000*60*60, \&on_checkupd); #timeout in hours to check update of the config/program
+
+#give a chance program to initialize
+Glib::Timeout->add	(
+				1000,
+				sub
+				{
+					if($config{inet_enable})
+					{
+						syswrite WRITER_PARENT, MSG_TURN_ON."\n";
+						kill 'USR1', $child;
+					}
+					else
+					{
+						kill 'ALRM', $child;
+					}
+					
+					return 0;
+				}
+			);
+
+Glib::Timeout->add(10*1000, sub{ on_checkupd(); return 0 });
+Glib::Timeout->add(1*1000,  sub{ notify("Задайте логин и пароль от страницы статистики") unless $config{login} && $config{password}; return 0 });
+Gtk2::AboutDialog->set_url_hook(sub{});
+
+Gtk2->main;
+
+
+#USER HANDLERS
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sub on_delete
+{
+	$window->hide;
+	return 1;
+}
+
+sub on_about
+{
+	Gtk2->show_about_dialog
+	(
+		$window,
+		program_name => 'ACP',
+		version      => ACP_VERSION,
+		comments     => 'ACP - Academ.org Control Panel для Linux',
+		license      => join('', <DATA>),
+		authors      => 'Олег Г. <verdrehung@gmail.com>',
+		icon         => $window->get_icon,
+		artists      => ['Алексей Б. <kilex@xmpp.ru>', 'Алексей В. <forlexan@gmail.com>', 'Олег Г. <verdrehung@gmail.com>'],
+		website      => substr(ACP_SERVER, 0, -7)
+	);
+}
+
+sub on_show
+{
+	$window->show;
+}
+
+sub on_quit
+{
+	if($config{inet_disable})
+	{
+		syswrite WRITER_PARENT, MSG_TURN_OFF."\n";
+		kill 'USR1', $child;
+	}
+	else
+	{
+		kill 'USR2', $child;
+	}
+	Gtk2->main_quit;
+}
+
+sub on_save
+{
+	$s1_btn->set_sensitive(0);
+	$s2_btn->set_sensitive(0);
+	syswrite WRITER_PARENT, MSG_CHECK_LP."\n".$l_entry->get_text."\n".$p_entry->get_text."\n";
+	kill 'USR1', $child;
+}
+
+sub on_popup
+{
+	$menu->show_all;
+	$menu->popup(undef, undef, undef, undef, 3, $_[2]);
+}
+
+sub on_showlog
+{
+	my $window = Gtk2::Window->new('toplevel');
+	$window->set_default_size(450, 400);
+	$window->set_title("ACP: просмотр лога");
+	$window->set_position("center");
+	my $scrolled = Gtk2::ScrolledWindow->new;
+	$window->add($scrolled);
+	my $buffer = Gtk2::TextBuffer->new;
+	my $log = get_file("$acp_path/acp.log");
+	utf8::decode($log);
+	$buffer->set_text($log);
+	my $textview = Gtk2::TextView->new_with_buffer($buffer);
+	$scrolled->add($textview);
+	$window->show_all;
+}
+
+sub on_click
+{
+	$click++;
+	if($click == 2)
+	{
+		$click = 0;
+		$tray_icon->set_from_file(ICON_WAIT);
+		syswrite WRITER_PARENT, ($online ? MSG_TURN_OFF : MSG_TURN_ON)."\n";
+		kill 'USR1', $child;
+	}
+	else
+	{
+		Glib::Timeout->add(250, \&single_click);
+	}
+}
+
+sub on_checkupd
+{
+	my $all = $_[1]+0;
+	my ($acp, $conf) = ($config{acp_update}||$all, $config{conf_update}||$all);
+	if($acp || $conf)
+	{
+		$tray_icon->set_from_file(ICON_WAIT);
+		syswrite WRITER_PARENT, MSG_CHECK_UPD."\n$conf$acp$all\n";
+		kill 'USR1', $child;
+	}
+	return 1;
+}
+
+#SIGNAL HANDLERS
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sub sig_chld
+{
+	warn 'Background worker died' if $child && waitpid($child, WNOHANG) == $child;
+}
+
+sub sig_usr1
+{
+	chomp(my $msg = <READER_PARENT>);
+
+	if($msg == MSG_CHECK_LP)
+	{
+		chomp(my $rcode = <READER_PARENT>);
+		$s1_btn->set_sensitive(1);
+		$s2_btn->set_sensitive(1);
+		unless($rcode)
+		{
+			say_msg("Неверный логин или пароль\nНастройки не сохранены", 'error');
+		}
+		else
+		{
+			if(save_settings())
+			{
+				do "$acp_path/config.pl";
+				do "$acp_path/acp.conf";
+				$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
+				syswrite WRITER_PARENT, MSG_RELOAD_CONF."\n";
+				kill 'USR1', $child;
+				say_msg("Настройки сохранены", 'info');
+			}
+		}
+	}
+	elsif($msg == MSG_GET_BAL)
+	{
+		
+		chomp(my $stat = <READER_PARENT>);
+		my ($bal, $status, $usage, $cred) = split '\|', $stat;
+		$online = $status;
+
+		utf8::decode($bal); utf8::decode($usage); utf8::decode($cred);
+		my ($icon, $msg) = tell_status($status);
+		put_file("$acp_path/acp.log", "[".date()."]\t".sprintf('%-20s', $bal)."\t$msg\n", '>>')
+		or say_msg("Ошибка записи в файл `$acp_path/acp.log'", 'error') if $config{do_log};
+		
+		$tray_icon->set_tooltip("Баланс: $bal\nСегодня: $usage".($cred ? "\nКредит: $cred" : ""));
+		$tray_icon->set_from_file($icon);
+		
+		my ($credt) = $cred =~ /\((\d+)/;
+		if($config{cred_notify} && $credt && ($credt < $config{cred_notify_val} || on_holiday($credt)) && !$upd && $online!=-1)
+		{
+			$upd++;
+			notify("Обещанный платеж истекает через $credt дн.\nНе забудьте пополнить баланс");
+		}
+		elsif($config{bal_notify} && (split(/\s/, $bal))[0] < $config{bal_notify_val} && !$upd && $online!=-1)
+		{
+			$upd++;
+			notify("На вашем счете осталось $bal\nНе забудьте пополнить баланс");
+		}
+		elsif($upd)
+		{
+			$upd++;
+		}
+		
+		$upd = 0 if $upd > $config{period_notify}-1;
+	}
+	elsif($msg == MSG_CHECK_UPD)
+	{
+		$tray_icon->set_from_file((tell_status($online))[0]);
+
+		chomp (my $msg = <READER_PARENT>);
+		if($msg)
+		{
+			utf8::decode($msg);
+			put_file("$acp_path/acp.log", "[".date()."]\t$msg\n", '>>') if $config{do_log};
+			notify($msg);
+		}
+	}
+}
+
+#FUNCTIONAL
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sub check_lp
+{
+	my ($login, $password) = @_;
+	
+	my $page = getpage($config{stat_url}, encode_base64("$login:$password"));
+	return index($page, $config{login_failed}) == -1;
+}
+
+sub put_file
+{
+	my ($file, $data, $mode) = @_;
+	open my $fh, $mode||'>', "$file" or return 0;
+	print $fh $data;
+	close $fh;
+}
+
+sub getpage
+{
+	my ($url, $auth, $post) = @_;
+	my $method = $post ? 'POST' : 'GET';
+	
+	my $ua = LWP::UserAgent->new(agent => 'Mozilla/5.0', timeout => 10);
+
+	my $request = HTTP::Request->new($method, $url, $auth ? HTTP::Headers->new(Authorization => "Basic $auth") : undef);
+	if($post)
+	{
+		$request->content_type('application/x-www-form-urlencoded');
+		$request->content($post);
+	}
+
+	return $ua->request($request)->content;
+}
+
+sub say_msg
+{
+	my ($msg, $type) = @_;
+	
+	my $title;
+	   if ($type eq 'warning') { $title = 'Предупреждение' }
+	elsif ($type eq 'info')    { $title = 'Сообщение'      }
+	elsif ($type eq 'error')   { $title = 'Ошибка'         }
+	
+	my $dialog = Gtk2::MessageDialog->new($window, 'modal', $type, 'ok', $msg);
+	$dialog->set_title($title);
+	$dialog->run;
+	$dialog->destroy;
+	return 0;
+}
+
+sub save_settings
+{
+	my $password = xcrypt($p_entry->get_text, $user);
+	$password =~ s/'/\\'/g;
+	my $config = 
+	'our %config'.";\n\n"
+	.'$config{login} = \''.$l_entry->get_text."';\n"
+	.'$config{password} = \''.$password."';\n"
+	.'$config{stat_refresh} = '.$stat_refr_spin->get_value.";\n"
+	.'$config{do_log} = '.($do_log_check->get_active+0).";\n"
+	.'$config{inet_enable} = '.($inet_autoen_check->get_active+0).";\n"
+	.'$config{inet_disable} = '.($inet_autodis_check->get_active+0).";\n"
+	.'$config{bal_notify} = '.($bal_notify_check->get_active+0).";\n"
+	.'$config{bal_notify_val} = '.$bal_notify_spin->get_value.";\n"
+	.'$config{cred_notify} = '.($cred_notify_check->get_active+0).";\n"
+	.'$config{cred_notify_val} = '.$cred_notify_spin->get_value.";\n"
+	.'$config{period_notify} = '.$period_notify_spin->get_value.";\n"
+	.'$config{conf_update} = '.($conf_upd_check->get_active+0).";\n"
+	.'$config{acp_update} = '.($acp_upd_check->get_active+0).";\n"
+	.'$config{int_update} = '.($interv_upd_spin->get_value).";\n"
+	.'$config{holidays} = ['.join(',', map($_->get_active+0, @holidays))."];\n1;\n";
+	
+	put_file("$acp_path/acp.conf", $config) or return say_msg("Ошибка сохранения настроек:\nневозможно осуществить запись в файл `$acp_path/acp.conf'\n", 'error');
+}
+
+sub get_stat
+{
+	my $page = getpage($config{stat_url}, encode_base64("$config{login}:$config{password}"));
+	my ($cred_sum, $cred_time) = $page =~ $config{preg_cred};
+	my ($bal) = $page =~ $config{preg_bal};
+	my $status = (index($page, "on.png")!=-1) ? 1 : ((index($page, "off.png")!=-1) ? 0 : -1);
+	
+	$page = getpage("$config{stat_url}?pid=504", encode_base64("$config{login}:$config{password}"));
+	my($mday, $mon) = (localtime)[3, 4];
+	$mon++;
+	($mday, $mon) = (sprintf('%02d', $mday), sprintf('%02d', $mon));
+	my $usage;
+	unless($page =~ m#<td>([0-9.]+)</td>.?\n\s+<td>([^<]+)</td>.?\n\s+<td nowrap>[0-9]+-$mon-$mday</td>#)
+	{
+		$usage = "0 Мб/0 Руб";
+	}
+	else
+	{
+		$usage = decode('windows-1251', "$2/$1")." Руб";
+	}
+	$bal = decode('windows-1251', $bal);
+	$cred_sum = $cred_sum ? "$cred_sum руб ($cred_time дн)" : "";
+	utf8::encode($bal);
+	utf8::encode($status);
+	utf8::encode($usage);
+	utf8::encode($cred_sum);
+	
+	return ($bal||0, $status, $usage, $cred_sum);
+}
+
+sub tell_status
+{
+	my $code = shift;
+	
+	return (ICON_GREEN, 'интернет включен')  if $code == 1;
+	return (ICON_BROWN, 'интернет выключен') if $code == 0;
+	return (ICON_GRAY, 'статистика недоступна');
+}
+
+sub date
+{
+	my ($sec, $min, $hour, $mday, $mon) = localtime;
+	
+	return sprintf('%02d', $mday).'.'.sprintf('%02d', ++$mon).' '.sprintf('%02d', $hour).':'.sprintf('%02d', $min).':'.sprintf('%02d', $sec);
+}
+
+sub get_file
+{
+	my $file = shift;
+	open my $fh, $file or return '';
+	my $content;
+	$content .= $_ while <$fh>;
+	close $fh;
+	
+	return $content;
+}
+
+sub single_click
+{
+	if($click)
+	{
+		$click = 0;
+		$tray_icon->set_from_file(ICON_WAIT);
+		kill 'ALRM', $child;
+	}
+	return 0;
+}
+
+sub turn_inet
+{
+	my $act = shift; #1-enable, 0-disable
+	my $auth = encode_base64("$config{login}:$config{password}");
+	my $page = getpage($config{stat_url}, $auth);
+	
+	$page =~ $config{preg_pid};
+	if($act)
+	{
+		if(index($page, "on.png") == -1)
+		{
+			$page = getpage("$config{stat_url}?$1", $auth, 'referer=https%3A%2F%2Fstat.academ.org%2Fugui%2Findex.php&warnings_hidden=%2C%2Fusr%2Flocal%2Fopt%2Fpolus%2Fwww%2Fugui%2Fphp%2Fstates%2Flan%2Fon.php_18&warning_submit=');
+		}
+	}
+	else
+	{
+		if(index($page, "off.png") == -1)
+		{
+			$page=getpage("$config{stat_url}?$1", $auth, 'referer=https%3A%2F%2Fstat.academ.org%2Fugui%2Findex.php&warnings_hidden=%2C%2Fusr%2Flocal%2Fopt%2Fpolus%2Fwww%2Fugui%2Fphp%2Fstates%2Flan%2Foff.php_18&warning_submit=');
+		}
+	}
+}
+
+sub notify
+{
+	my $msg = shift;
+	my $rect = ($tray_icon->get_geometry)[1];
+	$notify->set_hint_int32('x', $rect->x+10);
+	$notify->set_hint_int32('y', $rect->y);
+	$notify->update('Academ.org Control Panel', $msg);
+	$notify->show;
+}
+
+sub on_holiday
+{
+	my $rest  = shift;
+	my $today = (localtime)[6];
+	
+	for(my $i=1; $i<$rest; $i++)
+	{
+		return 0 unless $config{holidays}[($today+$i) % 7];
+	}
+	
+	return 1;
+}
+
+sub xcrypt
+{
+	my ($msg, $key) = @_;
+	
+	my $diff = length($msg) - length($key);
+	if($diff > 0)
+	{ # key is smaller then msg
+		do
+		{
+			$key .= substr($key, 0, $diff);
+			$diff = length($msg) - length($key);
+			
+		}while($diff);
+	}
+	elsif($diff < 0)
+	{ # key is bigger then msg
+		$key = substr($key, 0, $diff);
+	}
+	
+	return $msg ^ $key;
+}
+
+__DATA__
+ACP является свободным программным обеспечением; вы можете распространять
+и/или изменять его согласно условиям Стандартной Общественной Лицензии GNU
+(GNU GPL), опубликованной Фондом свободного программного обеспечения (FSF),
+либо Лицензии версии 2, либо (на ваше усмотрение) любой более поздней версии.
+
+Программа распространяется в надежде, что она будет полезной, но БЕЗ КАКИХ
+БЫ ТО НИ БЫЛО ГАРАНТИЙНЫХ ОБЯЗАТЕЛЬСТВ; даже без косвенных гарантийных 
+обязательств, связанных с ПОТРЕБИТЕЛЬСКИМИ СВОЙСТВАМИ и ПРИГОДНОСТЬЮ ДЛЯ 
+ОПРЕДЕЛЕННЫХ ЦЕЛЕЙ. Для подробностей смотрите Стандартную Общественную 
+Лицензию GNU.
+
+Вы должны были получить копию Стандартной Общественной Лицензии GNU вместе 
+с этой программой. Если это не так, напишите в Фонд Свободного ПО (Free 
+Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA)
