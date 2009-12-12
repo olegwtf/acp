@@ -1,0 +1,35 @@
+#!/bin/bash
+
+echo 'copying to tmp..'
+tmp=/tmp/acp_`date +%s%N`
+mkdir $tmp || exit
+mkdir $tmp/DEBIAN || exit
+
+mkdir -p $tmp/usr/bin || exit
+cp acp $tmp/usr/bin || exit
+
+mkdir -p $tmp/usr/share/apps/acp || exit
+cp lib/* $tmp/usr/share/apps/acp || exit
+
+size=`du -ks $tmp/usr/ | cut -f1`
+version=`egrep -o 'ACP_VERSION[[:space:]]+=>[[:space:]]+[[:digit:].]+' acp | egrep -o '[[:digit:].]+'`
+
+echo \
+"Package: acp
+Version: $version
+Architecture: all
+Maintainer: Oleg G <verdrehung@gmail.com>
+Installed-Size: $size
+Depends: libgtk2-perl, libgtk2-notify-perl, libgtk2-gladexml-perl, libcrypt-ssleay-perl, libwww-perl, perl
+Section: perl
+Priority: optional
+Description: ACP - Academ.org Control Panel for Linux
+ Academ.org Control Panel for Linux helps users of Academ.Org network to work with their accounts" > $tmp/DEBIAN/control
+ 
+echo 'packing...'
+fakeroot dpkg-deb -b $tmp . || exit
+
+echo 'cleaning...'
+rm -rf $tmp
+
+echo 'done'
