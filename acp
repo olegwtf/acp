@@ -134,17 +134,16 @@ unless($child)
 		alarm $config{stat_refresh}*60;
 	};
 	
-	$SIG{USR2} = sub
-	{	#quit background worker
-		sleep 1;
+	$SIG{INT} = $SIG{HUP} = $SIG{TERM} = sub
+	{	#quitting
+		turn_inet(0) if $config{inet_disable};
 		exit;
 	};
-	
-	$SIG{INT} = $SIG{HUP} = $SIG{TERM} = 'IGNORE';
 
-	#wait until signal received, then wait again if previous signal was not USR2
+	#wait until signal received
 	sleep while 1;
 }
+
 
 #this is parent process: GUI
 close READER_CHILD;
@@ -303,15 +302,7 @@ sub on_show
 
 sub on_quit
 {
-	if($config{inet_disable})
-	{
-		syswrite WRITER_PARENT, MSG_TURN_OFF."\n";
-		kill 'USR1', $child;
-	}
-	else
-	{
-		kill 'USR2', $child;
-	}
+	kill 'TERM', $child;
 	Gtk2->main_quit;
 }
 
