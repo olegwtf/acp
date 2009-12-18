@@ -459,6 +459,8 @@ sub check_lp
 sub put_file
 {
 	my ($file, $data, $mode) = @_;
+	
+	utf8::encode($data);
 	open my $fh, $mode||'>', "$file" or return 0;
 	print $fh $data;
 	close $fh;
