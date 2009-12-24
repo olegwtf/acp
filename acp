@@ -50,12 +50,11 @@ die "Can't fork" unless defined (my $child = fork);
 unless($child)
 {
 	#this is child process: background worker
-	require LWP::UserAgent;
-	require MIME::Base64;
-	require Encode;
+	use lib('/home/milfoil/data/programming/perl/acp/acp/lib');
+	require WWW::AOstat;
 	
-	MIME::Base64->import('encode_base64');
-	Encode->import('decode');
+	my $stat = WWW::AOstat->new();
+	$stat->login($config{login}, $config{password}, 1);
 	
 	my $parent = getppid;
 	
@@ -70,7 +69,7 @@ unless($child)
 		{	#check login and password
 			chomp(my $login = <READER_CHILD>);
 			chomp(my $passw = <READER_CHILD>);
-			syswrite WRITER_CHILD, MSG_CHECK_LP."\n".check_lp($login, $passw)."\n";
+			syswrite WRITER_CHILD, MSG_CHECK_LP."\n".$stat->login($login, $passw)."\n";
 			kill 'USR1', $parent;
 		}
 		elsif($msg == MSG_GET_BAL)
@@ -79,12 +78,12 @@ unless($child)
 		}
 		elsif($msg == MSG_TURN_ON)
 		{	#turn on internet and update balance information
-			turn_inet(1);
+			$stat->turn(1);
 			kill 'ALRM', $$;
 		}
 		elsif($msg == MSG_TURN_OFF)
 		{	#turn off internet and update balance information
-			turn_inet(0);
+			$stat->turn(0);
 			kill 'ALRM', $$;
 		}
 		elsif($msg == MSG_RELOAD_CONF)
@@ -92,6 +91,7 @@ unless($child)
 			do "$acp_path/config.pl";
 			do "$acp_path/acp.conf";
 			$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
+			$stat->login($config{login}, $config{password}, 1);
 			kill 'ALRM', $$;
 		}
 		elsif($msg == MSG_CHECK_UPD)
@@ -100,7 +100,7 @@ unless($child)
 			my $msg = '';
 			my ($acp, $conf, $user_act) = split '', $what;
 
-			my ($acp_v, $conf_v) = split(/__/, getpage(ACP_SERVER.'?cat=last'));
+			my ($acp_v, $conf_v) = split(/__/, $stat->geturl(ACP_SERVER.'?cat=last'));
 	
 			unless($acp_v && $conf_v)
 			{
@@ -129,14 +129,18 @@ unless($child)
 	
 	$SIG{ALRM} = sub
 	{	#get statistics: balance, etc
-		syswrite WRITER_CHILD, MSG_GET_BAL."\n".join('|', get_stat())."\n";
+		my ($traff, $money, $status) = $stat->stat();
+		my ($u_traff, $u_money)      = $stat->usage();
+		my ($cred_sum, $cred_time)   = $stat->credit();
+		
+		syswrite WRITER_CHILD, MSG_GET_BAL."\n$traff|$money|$status|$u_traff|$u_money|$cred_sum|$cred_time\n";
 		kill 'USR1', $parent;
 		alarm $config{stat_refresh}*60;
 	};
 	
 	$SIG{INT} = $SIG{HUP} = $SIG{TERM} = sub
 	{	#quitting
-		turn_inet(0) if $config{inet_disable};
+		$stat->turn(0) if $config{inet_disable};
 		exit;
 	};
 
@@ -246,7 +250,7 @@ $notify->set_timeout(10000);
 Glib::Timeout->add($config{int_update}*1000*60*60, \&on_checkupd); #timeout in hours to check update of the config/program
 
 #give a chance program to initialize
-Glib::Timeout->add	(
+Glib::Timeout->add(
 				1000,
 				sub
 				{
@@ -270,6 +274,86 @@ Gtk2::AboutDialog->set_url_hook(sub{});
 
 Gtk2->main;
 
+
+#SIGNAL HANDLERS
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sub sig_chld
+{
+	warn 'Background worker died' if $child && waitpid($child, WNOHANG) == $child;
+}
+
+sub sig_usr1
+{
+	chomp(my $msg = <READER_PARENT>);
+
+	if($msg == MSG_CHECK_LP)
+	{
+		chomp(my $rcode = <READER_PARENT>);
+		$s1_btn->set_sensitive(1);
+		$s2_btn->set_sensitive(1);
+		unless($rcode)
+		{
+			say_msg("Неверный логин или пароль\nНастройки не сохранены", 'error');
+		}
+		else
+		{
+			if(save_settings())
+			{
+				do "$acp_path/config.pl";
+				do "$acp_path/acp.conf";
+				$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
+				syswrite WRITER_PARENT, MSG_RELOAD_CONF."\n";
+				kill 'USR1', $child;
+				say_msg("Настройки сохранены", 'info');
+			}
+		}
+	}
+	elsif($msg == MSG_GET_BAL)
+	{
+		
+		chomp(my $stat = <READER_PARENT>);
+
+		my ($traff, $money, $status, $u_traff, $u_money, $cred_sum, $cred_time) = split '\|', $stat;
+		my $bal = ($money||0)." руб / ".($traff||0)." мб";
+		$online = $status;
+
+		my ($icon, $msg) = tell_status($status);
+		put_file("$acp_path/acp.log", "[".date()."]\t".sprintf('%-20s', $bal)."\t$msg\n", '>>')
+		or say_msg("Ошибка записи в файл `$acp_path/acp.log'", 'error') if $config{do_log};
+		
+		$tray_icon->set_tooltip("Баланс: $bal".($u_traff ? "\nСегодня: $u_money руб / $u_traff мб" : "").($cred_sum ? "\nКредит: $cred_sum руб ($cred_time дн)" : ""));
+		$tray_icon->set_from_file($icon);
+		
+		if($config{cred_notify} && $cred_time && ($cred_time < $config{cred_notify_val} || on_holiday($cred_time)) && !$upd && $online!=-1)
+		{
+			$upd++;
+			notify("Обещанный платеж истекает через $cred_time дн.\nНе забудьте пополнить баланс");
+		}
+		elsif($config{bal_notify} && (split(/\s/, $bal))[0] < $config{bal_notify_val} && !$upd && $online!=-1)
+		{
+			$upd++;
+			notify("На вашем счете осталось $bal\nНе забудьте пополнить баланс");
+		}
+		elsif($upd)
+		{
+			$upd++;
+		}
+		
+		$upd = 0 if $upd > $config{period_notify}-1;
+	}
+	elsif($msg == MSG_CHECK_UPD)
+	{
+		$tray_icon->set_from_file((tell_status($online))[0]);
+
+		chomp (my $msg = <READER_PARENT>);
+		if($msg)
+		{
+			utf8::decode($msg);
+			put_file("$acp_path/acp.log", "[".date()."]\t$msg\n", '>>') if $config{do_log};
+			notify($msg);
+		}
+	}
+}
 
 #USER HANDLERS
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -366,94 +450,18 @@ sub on_checkupd
 	return 1;
 }
 
-#SIGNAL HANDLERS
-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-sub sig_chld
-{
-	warn 'Background worker died' if $child && waitpid($child, WNOHANG) == $child;
-}
-
-sub sig_usr1
-{
-	chomp(my $msg = <READER_PARENT>);
-
-	if($msg == MSG_CHECK_LP)
-	{
-		chomp(my $rcode = <READER_PARENT>);
-		$s1_btn->set_sensitive(1);
-		$s2_btn->set_sensitive(1);
-		unless($rcode)
-		{
-			say_msg("Неверный логин или пароль\nНастройки не сохранены", 'error');
-		}
-		else
-		{
-			if(save_settings())
-			{
-				do "$acp_path/config.pl";
-				do "$acp_path/acp.conf";
-				$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
-				syswrite WRITER_PARENT, MSG_RELOAD_CONF."\n";
-				kill 'USR1', $child;
-				say_msg("Настройки сохранены", 'info');
-			}
-		}
-	}
-	elsif($msg == MSG_GET_BAL)
-	{
-		
-		chomp(my $stat = <READER_PARENT>);
-		my ($bal, $status, $usage, $cred) = split '\|', $stat;
-		$online = $status;
-
-		utf8::decode($bal); utf8::decode($usage); utf8::decode($cred);
-		my ($icon, $msg) = tell_status($status);
-		put_file("$acp_path/acp.log", "[".date()."]\t".sprintf('%-20s', $bal)."\t$msg\n", '>>')
-		or say_msg("Ошибка записи в файл `$acp_path/acp.log'", 'error') if $config{do_log};
-		
-		$tray_icon->set_tooltip("Баланс: $bal\nСегодня: $usage".($cred ? "\nКредит: $cred" : ""));
-		$tray_icon->set_from_file($icon);
-		
-		my ($credt) = $cred =~ /\((\d+)/;
-		if($config{cred_notify} && $credt && ($credt < $config{cred_notify_val} || on_holiday($credt)) && !$upd && $online!=-1)
-		{
-			$upd++;
-			notify("Обещанный платеж истекает через $credt дн.\nНе забудьте пополнить баланс");
-		}
-		elsif($config{bal_notify} && (split(/\s/, $bal))[0] < $config{bal_notify_val} && !$upd && $online!=-1)
-		{
-			$upd++;
-			notify("На вашем счете осталось $bal\nНе забудьте пополнить баланс");
-		}
-		elsif($upd)
-		{
-			$upd++;
-		}
-		
-		$upd = 0 if $upd > $config{period_notify}-1;
-	}
-	elsif($msg == MSG_CHECK_UPD)
-	{
-		$tray_icon->set_from_file((tell_status($online))[0]);
-
-		chomp (my $msg = <READER_PARENT>);
-		if($msg)
-		{
-			utf8::decode($msg);
-			put_file("$acp_path/acp.log", "[".date()."]\t$msg\n", '>>') if $config{do_log};
-			notify($msg);
-		}
-	}
-}
 
 #FUNCTIONAL
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-sub check_lp
+sub single_click
 {
-	my ($login, $password) = @_;
-	
-	my $page = getpage($config{stat_url}, encode_base64("$login:$password"));
-	return index($page, $config{login_failed}) == -1;
+	if($click)
+	{
+		$click = 0;
+		$tray_icon->set_from_file(ICON_WAIT);
+		kill 'ALRM', $child;
+	}
+	return 0;
 }
 
 sub put_file
@@ -466,21 +474,15 @@ sub put_file
 	close $fh;
 }
 
-sub getpage
+sub get_file
 {
-	my ($url, $auth, $post) = @_;
-	my $method = $post ? 'POST' : 'GET';
+	my $file = shift;
+	open my $fh, $file or return '';
+	my $content;
+	$content .= $_ while <$fh>;
+	close $fh;
 	
-	my $ua = LWP::UserAgent->new(agent => 'Mozilla/5.0', timeout => 10);
-
-	my $request = HTTP::Request->new($method, $url, $auth ? HTTP::Headers->new(Authorization => "Basic $auth") : undef);
-	if($post)
-	{
-		$request->content_type('application/x-www-form-urlencoded');
-		$request->content($post);
-	}
-
-	return $ua->request($request)->content;
+	return $content;
 }
 
 sub say_msg
@@ -524,36 +526,6 @@ sub save_settings
 	put_file("$acp_path/acp.conf", $config) or return say_msg("Ошибка сохранения настроек:\nневозможно осуществить запись в файл `$acp_path/acp.conf'\n", 'error');
 }
 
-sub get_stat
-{
-	my $page = getpage($config{stat_url}, encode_base64("$config{login}:$config{password}"));
-	my ($cred_sum, $cred_time) = $page =~ $config{preg_cred};
-	my ($bal) = $page =~ $config{preg_bal};
-	my $status = (index($page, "on.png")!=-1) ? 1 : ((index($page, "off.png")!=-1) ? 0 : -1);
-	
-	$page = getpage("$config{stat_url}?pid=504", encode_base64("$config{login}:$config{password}"));
-	my($mday, $mon) = (localtime)[3, 4];
-	$mon++;
-	($mday, $mon) = (sprintf('%02d', $mday), sprintf('%02d', $mon));
-	my $usage;
-	unless($page =~ m#<td>([0-9.]+)</td>.?\n\s+<td>([^<]+)</td>.?\n\s+<td nowrap>[0-9]+-$mon-$mday</td>#)
-	{
-		$usage = "0 Мб/0 Руб";
-	}
-	else
-	{
-		$usage = decode('windows-1251', "$2/$1")." Руб";
-	}
-	$bal = decode('windows-1251', $bal);
-	$cred_sum = $cred_sum ? "$cred_sum руб ($cred_time дн)" : "";
-	utf8::encode($bal);
-	utf8::encode($status);
-	utf8::encode($usage);
-	utf8::encode($cred_sum);
-	
-	return ($bal||0, $status, $usage, $cred_sum);
-}
-
 sub tell_status
 {
 	my $code = shift;
@@ -568,51 +540,6 @@ sub date
 	my ($sec, $min, $hour, $mday, $mon) = localtime;
 	
 	return sprintf('%02d', $mday).'.'.sprintf('%02d', ++$mon).' '.sprintf('%02d', $hour).':'.sprintf('%02d', $min).':'.sprintf('%02d', $sec);
-}
-
-sub get_file
-{
-	my $file = shift;
-	open my $fh, $file or return '';
-	my $content;
-	$content .= $_ while <$fh>;
-	close $fh;
-	
-	return $content;
-}
-
-sub single_click
-{
-	if($click)
-	{
-		$click = 0;
-		$tray_icon->set_from_file(ICON_WAIT);
-		kill 'ALRM', $child;
-	}
-	return 0;
-}
-
-sub turn_inet
-{
-	my $act = shift; #1-enable, 0-disable
-	my $auth = encode_base64("$config{login}:$config{password}");
-	my $page = getpage($config{stat_url}, $auth);
-	
-	$page =~ $config{preg_pid};
-	if($act)
-	{
-		if(index($page, "on.png") == -1)
-		{
-			$page = getpage("$config{stat_url}?$1", $auth, 'referer=https%3A%2F%2Fstat.academ.org%2Fugui%2Findex.php&warnings_hidden=%2C%2Fusr%2Flocal%2Fopt%2Fpolus%2Fwww%2Fugui%2Fphp%2Fstates%2Flan%2Fon.php_18&warning_submit=');
-		}
-	}
-	else
-	{
-		if(index($page, "off.png") == -1)
-		{
-			$page=getpage("$config{stat_url}?$1", $auth, 'referer=https%3A%2F%2Fstat.academ.org%2Fugui%2Findex.php&warnings_hidden=%2C%2Fusr%2Flocal%2Fopt%2Fpolus%2Fwww%2Fugui%2Fphp%2Fstates%2Flan%2Foff.php_18&warning_submit=');
-		}
-	}
 }
 
 sub notify

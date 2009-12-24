@@ -11,15 +11,15 @@ use constant
 	URL_TURN_OFF => 'https://stat.academ.org/ugui/api.php?OP=2&USERID=4397&STATUS=OFF&KEY=499f46e2e46da8608bc04b95694dfbfd',
 	URL_USAGE    => 'https://stat.academ.org/ugui/index.php?pid=504',
 	URL_CREDIT   => 'https://stat.academ.org/ugui/index.php?pid=500',
-}
+};
 
 our $VERSION = 0.1;
 
 sub new
 {
-	my ($class, %opts) = @_;
+	my ($class, %lwp_opts) = @_;
 	
-	my $self = {ua=>LWP::UserAgent->new(agent=>'', timeout=>10, default_headers=>HTTP::Headers->new(Pragma=>'no-cache', Accept=>'image/gif, image/x-xbitmap, image/jpeg, image/pjpeg, */*'), %opts)};
+	my $self = {ua=>LWP::UserAgent->new(agent=>'', timeout=>10, default_headers=>HTTP::Headers->new(Pragma=>'no-cache', Accept=>'image/gif, image/x-xbitmap, image/jpeg, image/pjpeg, */*'), %lwp_opts)};
 	bless $self, $class;
 }
 
@@ -27,15 +27,23 @@ sub login
 {
 	my ($self, $login, $password, $nocheck) = @_;
 	
+	my $old_login    = $self->{login};
+	my $old_password = $self->{password};
+	
+	$self->{login}    = $login;
+	$self->{password} = $password;
+	
 	unless($nocheck)
 	{
 		my $page = $self->geturl(URL_STAT);
 		$page =~ /ERR=(\d+)/ or return 0;
-		return 0 unless $1 == 0;
+		unless($1 == 0)
+		{
+			$self->{login}    = $old_login;
+			$self->{password} = $old_password;
+			return 0;
+		}
 	}
-	
-	$self->{login}    = $login;
-	$self->{password} = $password;
 	
 	return 1;
 }
@@ -93,11 +101,12 @@ sub usage
 	}
 	else
 	{
-		$regexp = "<td>([0-9.]+)</td>.?\n\s+<td>([^<]+)</td>.?\n\s+<td nowrap>[0-9]+-$mon-$mday</td>";
+		$regexp = qr!<td>([\d.]+)[^<]{0,10}</td>.?\n\s+<td>([\d.]+)[^<]{0,10}</td>.?\n\s+<td nowrap>\d+-$mon-$mday</td>!;
 	}
-	
+
 	my ($money, $traff) = $page =~ $regexp;
-	return ($money || $traff) ? ($money, $traff) : ();
+	
+	return ($traff || $money) ? ($traff, $money) : ();
 }
 
 sub credit
