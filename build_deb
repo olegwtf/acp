@@ -11,8 +11,15 @@ cp acp $tmp/usr/bin || exit
 mkdir -p $tmp/usr/share/apps/acp || exit
 cp lib/* $tmp/usr/share/apps/acp || exit
 
+mkdir -p $tmp/usr/share/perl5/WWW || exit
+cp WWW/* $tmp/usr/share/perl5/WWW || exit
+
 size=`du -ks $tmp/usr/ | cut -f1`
 version=`egrep -o 'ACP_VERSION[[:space:]]+=>[[:space:]]+[[:digit:].]+' acp | egrep -o '[[:digit:].]+'`
+revision=`find . -type d -name .svn -exec egrep -A 1 '[[:digit:]]{4}-[[:digit:]]{2}-[[:digit:]]{2}' '{}/entries' \; | egrep '^[0-9]+$' | sort -g | tail -n 1`
+
+# set revision
+sed -i -r "s/(ACP_REVISION[[:space:]]*=>[[:space:]]*)[[:digit:]]+/\1$revision/" $tmp/usr/bin/acp
 
 echo \
 "Package: acp
