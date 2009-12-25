@@ -21,6 +21,7 @@ use constant
 	CONFIG          => '/usr/share/apps/acp/acp.conf',
 	CONFIG_PL       => '/usr/share/apps/acp/config.pl',
 	ACP_VERSION     => 0.270,
+	ACP_REVISION    => 6,
 	ACP_SERVER      => 'http://prozer.at.nsu.ru/acp/get.php'
 };
 
@@ -50,7 +51,6 @@ die "Can't fork" unless defined (my $child = fork);
 unless($child)
 {
 	#this is child process: background worker
-	use lib('/home/milfoil/data/programming/perl/acp/acp/lib');
 	require WWW::AOstat;
 	
 	my $stat = WWW::AOstat->new();
@@ -370,7 +370,7 @@ sub on_about
 		$window,
 		program_name => 'ACP',
 		version      => ACP_VERSION,
-		comments     => 'ACP - Academ.org Control Panel для Linux',
+		comments     => "(SVN r".ACP_REVISION.")\nACP - Academ.org Control Panel для Linux",
 		license      => join('', <DATA>),
 		authors      => 'Олег Г. <verdrehung@gmail.com>',
 		icon         => $window->get_icon,
