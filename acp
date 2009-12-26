@@ -100,7 +100,7 @@ unless($child)
 			my $msg = '';
 			my ($acp, $conf, $user_act) = split '', $what;
 
-			my ($acp_v, $conf_v) = split(/__/, $stat->geturl(ACP_SERVER.'?cat=last'));
+			my ($acp_v, $conf_v) = split(/__/, $stat->geturl(ACP_SERVER.'?cat=last', 1));
 	
 			unless($acp_v && $conf_v)
 			{
