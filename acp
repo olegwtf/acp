@@ -20,7 +20,7 @@ use constant
 	ICON_MAIN       => '/usr/share/apps/acp/acp_main.ico',
 	CONFIG          => '/usr/share/apps/acp/acp.conf',
 	CONFIG_PL       => '/usr/share/apps/acp/config.pl',
-	ACP_VERSION     => 0.270,
+	ACP_VERSION     => 0.280,
 	ACP_REVISION    => 6,
 	ACP_SERVER      => 'http://prozer.at.nsu.ru/acp/get.php'
 };
@@ -53,7 +53,7 @@ unless($child)
 	#this is child process: background worker
 	require WWW::AOstat;
 	
-	my $stat = WWW::AOstat->new();
+	my $stat = WWW::AOstat->new(timeout=>20);
 	$stat->login($config{login}, $config{password}, 1);
 	
 	my $parent = getppid;
@@ -130,8 +130,8 @@ unless($child)
 	$SIG{ALRM} = sub
 	{	#get statistics: balance, etc
 		my ($traff, $money, $status) = $stat->stat();
-		my ($u_traff, $u_money)      = $stat->usage();
-		my ($cred_sum, $cred_time)   = $stat->credit();
+		my ($u_traff, $u_money)      = $stat->usage($config{preg_usage});
+		my ($cred_sum, $cred_time)   = $stat->credit($config{preg_credit});
 		
 		syswrite WRITER_CHILD, MSG_GET_BAL."\n$traff|$money|$status|$u_traff|$u_money|$cred_sum|$cred_time\n";
 		kill 'USR1', $parent;

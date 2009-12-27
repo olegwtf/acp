@@ -104,10 +104,20 @@ sub usage
 	}
 	else
 	{
-		$regexp = qr!<td>([\d.]+)[^<]{0,10}</td>.?\n\s+<td>([\d.]+)[^<]{0,10}</td>.?\n\s+<td nowrap>\d+-$mon-$mday</td>!;
+		$regexp = qr!<td>([\d.]+)[^<]{0,10}</td>.?\n\s+<td>([\d.]+)\s*(.)[^<]{0,10}</td>.?\n\s+<td nowrap>\d+-$mon-$mday</td>!;
 	}
 
-	my ($money, $traff) = $page =~ $regexp;
+	my ($money, $traff, $measure) = $page =~ $regexp;
+	$measure = ord($measure);
+	
+	if($measure == 202)
+	{ # kb
+		$traff = sprintf('%.2f', $traff/1024);
+	}
+	elsif($measure == 195)
+	{ # gb
+		$traff *= 1024;
+	}
 	
 	return ($traff || $money) ? ($traff, $money) : ();
 }
@@ -165,7 +175,7 @@ of days remains.
 
 =over
 
-=item $stat->new(%lwp_opts)
+=item WWW::AOstat->new(%lwp_opts)
 
 Constructs new C<WWW::AOstat> object. You can pass options pairs as argument. This options
 would pass to LWP::UserAgent constructor.
@@ -186,7 +196,7 @@ Example:
 
 =item $stat->stat()
 
-Trying to get user statistic. Return list of the traffic remained, money remained and online
+Trying to get user statistic. Return list of the traffic (mb) remained, money (rub) remained and online
 status on success. On failure return empty list, which means false in the list context.
 
 Example:
@@ -208,16 +218,18 @@ Return true on success and false on failure.
 
 =item $stat->usage($regexp)
 
-Trying to get present traffic and money usage. Return list of the traffic and money on
+Trying to get present traffic and money usage. Return list of the traffic (mb) and money (rub) on
 success. On failure return empty list, which means false in the list context. You can
 pass optional parameter which should be regular expression if you want to override
-default regular expression (for example if it is not already work).
+default regular expression (for example if it already does not work). This regexp could contain
+special templates {mon} and {mday} which would be replaced by current month number and day of the
+month accordingly.
 
 Example:
 
 	if(my ($traff, $money) = $stat->usage)
 	{
-		print "Usage: traffic - $tarff, money - $money";
+		print "Usage: traffic - $traff, money - $money";
 	}
 	else
 	{
@@ -227,9 +239,9 @@ Example:
 =item $stat->credit($regexp)
 
 Getting credit amount and days remains. If credit used it return list of the credit
-amount and days remains. You can pass optional parameter which should be regular
-expression if you want to override default regular expression
-(for example if it is not already work).
+amount (rub) and days remains. Otherwise it return empty list. You can pass optional parameter
+which should be regular expression if you want to override default regular expression
+(for example if it already does not work).
 
 Example:
 
