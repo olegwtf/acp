@@ -56,8 +56,8 @@ sub stat
 	$page =~ /ERR=(\d+)/;
 	return () if $1 != 0;
 	
-	my ($traff) = $page =~ /REMAINS_MB=(\d+)/;
-	my ($money) = $page =~ /REMAINS_RUR=(\d+(?:.\d{1,2})?)/;
+	my ($traff) = $page =~ /REMAINS_MB=(-?\d+)/;
+	my ($money) = $page =~ /REMAINS_RUR=(-?\d+(?:.\d{1,2})?)/;
 	my $status  = index($page, ';OFF') == -1
 			? 
 				index($page, ';ON') == -1 ? 
@@ -229,7 +229,7 @@ Example:
 
 	if(my ($traff, $money) = $stat->usage)
 	{
-		print "Usage: traffic - $traff, money - $money";
+		print "Usage: traffic - $tarff, money - $money";
 	}
 	else
 	{
