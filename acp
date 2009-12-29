@@ -53,7 +53,7 @@ unless($child)
 	#this is child process: background worker
 	require WWW::AOstat;
 	
-	my $stat = WWW::AOstat->new(timeout=>20);
+	my $stat = WWW::AOstat->new(timeout=>10);
 	$stat->login($config{login}, $config{password}, 1);
 	
 	my $parent = getppid;
