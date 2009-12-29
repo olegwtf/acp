@@ -112,7 +112,7 @@ unless($child)
 			}
 			elsif($conf && $conf_v > $config{version})
 			{
-				put_file("$acp_path/config.pl", getpage(ACP_SERVER.'?cat=last_config'));
+				put_file("$acp_path/config.pl", $stat->geturl(ACP_SERVER.'?cat=last_config', 1));
 				do "$acp_path/config.pl";
 				$msg = "Конфиг обновлен до версии $conf_v";
 			}
