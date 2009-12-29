@@ -54,7 +54,7 @@ sub stat
 	
 	my $page = $self->geturl(URL_STAT);
 	$page =~ /ERR=(\d+)/;
-	return () if $1 != 0;
+	return (0, 0, -1) if $1 != 0;
 	
 	my ($traff) = $page =~ /REMAINS_MB=(-?\d+)/;
 	my ($money) = $page =~ /REMAINS_RUR=(-?\d+(?:.\d{1,2})?)/;
