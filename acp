@@ -130,6 +130,7 @@ unless($child)
 	$SIG{ALRM} = sub
 	{	#get statistics: balance, etc
 		my ($traff, $money, $status) = $stat->stat();
+		$status = -1 unless defined $status;
 		my ($u_traff, $u_money)      = $stat->usage($config{preg_usage});
 		my ($cred_sum, $cred_time)   = $stat->credit($config{preg_credit});
 		
@@ -312,7 +313,6 @@ sub sig_usr1
 	{
 		
 		chomp(my $stat = <READER_PARENT>);
-
 		my ($traff, $money, $status, $u_traff, $u_money, $cred_sum, $cred_time) = split '\|', $stat;
 		my $bal = ($money||0)." руб / ".($traff||0)." мб";
 		$online = $status;

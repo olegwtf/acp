@@ -53,8 +53,8 @@ sub stat
 	my ($self) = @_;
 	
 	my $page = $self->geturl(URL_STAT);
-	$page =~ /ERR=(\d+)/;
-	return (0, 0, -1) if $1 != 0;
+	return () unless $page =~ /ERR=(\d+)/;
+	return () if $1 != 0;
 	
 	my ($traff) = $page =~ /REMAINS_MB=(-?\d+)/;
 	my ($money) = $page =~ /REMAINS_RUR=(-?\d+(?:.\d{1,2})?)/;
@@ -85,7 +85,7 @@ sub turn
 		$page = $self->geturl(URL_TURN_OFF);
 	}
 	
-	$page =~ /ERR=(\d+)/;
+	return 0 unless $page =~ /ERR=(\d+)/;
 	return !$1;
 }
 
