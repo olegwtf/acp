@@ -12,6 +12,7 @@ use constant
 	MSG_TURN_OFF    => 3,
 	MSG_RELOAD_CONF => 4,
 	MSG_CHECK_UPD   => 5,
+	MSG_CHILD_READY => 6,
 	GLADE           => '/usr/share/apps/acp/acp.glade',
 	ICON_WAIT       => '/usr/share/apps/acp/acp_wait.png',
 	ICON_GREEN      => '/usr/share/apps/acp/acp_green.png',
@@ -144,6 +145,10 @@ unless($child)
 		$stat->turn(0) if $config{inet_disable};
 		exit;
 	};
+	
+	#notify parent that child is ready to work
+	syswrite WRITER_CHILD, MSG_CHILD_READY."\n";
+	kill 'USR1', $parent;
 
 	#wait until signal received
 	sleep while 1;
@@ -249,26 +254,6 @@ $menu->append($menu_opt);
 my $notify = Gtk2::Notify->new('Academ.org Control Panel');
 $notify->set_timeout(10000);
 Glib::Timeout->add($config{int_update}*1000*60*60, \&on_checkupd); #timeout in hours to check update of the config/program
-
-#give a chance program to initialize
-Glib::Timeout->add(
-				1000,
-				sub
-				{
-					if($config{inet_enable})
-					{
-						syswrite WRITER_PARENT, MSG_TURN_ON."\n";
-						kill 'USR1', $child;
-					}
-					else
-					{
-						kill 'ALRM', $child;
-					}
-					
-					return 0;
-				}
-			);
-
 Glib::Timeout->add(10*1000, sub{ on_checkupd(); return 0 });
 Glib::Timeout->add(1*1000,  sub{ notify("Задайте логин и пароль от страницы статистики") unless $config{login} && $config{password}; return 0 });
 Gtk2::AboutDialog->set_url_hook(sub{});
@@ -351,6 +336,18 @@ sub sig_usr1
 			utf8::decode($msg);
 			put_file("$acp_path/acp.log", "[".date()."]\t$msg\n", '>>') if $config{do_log};
 			notify($msg);
+		}
+	}
+	elsif($msg == MSG_CHILD_READY)
+	{
+		if($config{inet_enable})
+		{
+			syswrite WRITER_PARENT, MSG_TURN_ON."\n";
+			kill 'USR1', $child;
+		}
+		else
+		{
+			kill 'ALRM', $child;
 		}
 	}
 }
