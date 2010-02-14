@@ -21,7 +21,7 @@ use constant
 	ICON_MAIN       => '/usr/share/apps/acp/acp_main.ico',
 	CONFIG          => '/usr/share/apps/acp/acp.conf',
 	CONFIG_PL       => '/usr/share/apps/acp/config.pl',
-	ACP_VERSION     => 0.280,
+	ACP_VERSION     => 0.281,
 	ACP_REVISION    => 6,
 	ACP_SERVER      => 'http://prozer.at.nsu.ru/acp/get.php'
 };
@@ -441,7 +441,7 @@ sub on_checkupd
 	if($acp || $conf)
 	{
 		$tray_icon->set_from_file(ICON_WAIT);
-		syswrite WRITER_PARENT, MSG_CHECK_UPD."\n$conf$acp$all\n";
+		syswrite WRITER_PARENT, MSG_CHECK_UPD."\n$acp$conf$all\n";
 		kill 'USR1', $child;
 	}
 	return 1;
