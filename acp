@@ -6,24 +6,25 @@ use POSIX 'WNOHANG';
 
 use constant
 {
-	MSG_CHECK_LP    => 0,
-	MSG_GET_BAL     => 1,
-	MSG_TURN_ON     => 2,
-	MSG_TURN_OFF    => 3,
-	MSG_RELOAD_CONF => 4,
-	MSG_CHECK_UPD   => 5,
-	MSG_CHILD_READY => 6,
-	GLADE           => '/usr/share/apps/acp/acp.glade',
-	ICON_WAIT       => '/usr/share/apps/acp/acp_wait.png',
-	ICON_GREEN      => '/usr/share/apps/acp/acp_green.png',
-	ICON_BROWN      => '/usr/share/apps/acp/acp_brown.png',
-	ICON_GRAY       => '/usr/share/apps/acp/acp_gray.png',
-	ICON_MAIN       => '/usr/share/apps/acp/acp_main.ico',
-	CONFIG          => '/usr/share/apps/acp/acp.conf',
-	CONFIG_PL       => '/usr/share/apps/acp/config.pl',
-	ACP_VERSION     => 0.281,
-	ACP_REVISION    => 6,
-	ACP_SERVER      => 'http://prozer.at.nsu.ru/acp/get.php'
+	MSG_CHECK_LP         => 0,
+	MSG_GET_BAL          => 1,
+	MSG_TURN_ON          => 2,
+	MSG_TURN_OFF         => 3,
+	MSG_RELOAD_CONF      => 4,
+	MSG_CHECK_UPD        => 5,
+	MSG_CHILD_READY      => 6,
+	MSG_PARENT_NOT_READY => 7,
+	GLADE                => '/usr/share/apps/acp/acp.glade',
+	ICON_WAIT            => '/usr/share/apps/acp/acp_wait.png',
+	ICON_GREEN           => '/usr/share/apps/acp/acp_green.png',
+	ICON_BROWN           => '/usr/share/apps/acp/acp_brown.png',
+	ICON_GRAY            => '/usr/share/apps/acp/acp_gray.png',
+	ICON_MAIN            => '/usr/share/apps/acp/acp_main.ico',
+	CONFIG               => '/usr/share/apps/acp/acp.conf',
+	CONFIG_PL            => '/usr/share/apps/acp/config.pl',
+	ACP_VERSION          => 0.282,
+	ACP_REVISION         => 0,
+	ACP_SERVER           => 'http://prozer.at.nsu.ru/acp/get.php'
 };
 
 my $acp_path = "$ENV{HOME}/.acp";
@@ -126,6 +127,13 @@ unless($child)
 			syswrite WRITER_CHILD, MSG_CHECK_UPD."\n$msg\n";
 			kill 'USR1', $parent;
 		}
+		elsif($msg == MSG_PARENT_NOT_READY)
+		{ #parent not initialized yet: sleep for 0.25 sec and try again
+			select undef, undef, undef, 0.25;
+			
+			syswrite WRITER_CHILD, MSG_CHILD_READY."\n";
+			kill 'USR1', $parent;
+		}
 	};
 	
 	$SIG{ALRM} = sub
@@ -156,6 +164,8 @@ unless($child)
 
 
 #this is parent process: GUI
+my $PARENT_READY = 0;
+
 close READER_CHILD;
 close WRITER_CHILD;
 $SIG{CHLD} = \&sig_chld;
@@ -258,6 +268,8 @@ Glib::Timeout->add(10*1000, sub{ on_checkupd(); return 0 });
 Glib::Timeout->add(1*1000,  sub{ notify("Задайте логин и пароль от страницы статистики") unless $config{login} && $config{password}; return 0 });
 Gtk2::AboutDialog->set_url_hook(sub{});
 
+$PARENT_READY = 1;
+
 Gtk2->main;
 
 
@@ -340,14 +352,22 @@ sub sig_usr1
 	}
 	elsif($msg == MSG_CHILD_READY)
 	{
-		if($config{inet_enable})
+		if($PARENT_READY)
 		{
-			syswrite WRITER_PARENT, MSG_TURN_ON."\n";
-			kill 'USR1', $child;
+			if($config{inet_enable})
+			{
+				syswrite WRITER_PARENT, MSG_TURN_ON."\n";
+				kill 'USR1', $child;
+			}
+			else
+			{
+				kill 'ALRM', $child;
+			}
 		}
 		else
 		{
-			kill 'ALRM', $child;
+			syswrite WRITER_PARENT, MSG_PARENT_NOT_READY."\n";
+			kill 'USR1', $child;
 		}
 	}
 }
