@@ -22,7 +22,7 @@ use constant
 	ICON_MAIN            => '/usr/share/apps/acp/acp_main.ico',
 	CONFIG               => '/usr/share/apps/acp/acp.conf',
 	CONFIG_PL            => '/usr/share/apps/acp/config.pl',
-	ACP_VERSION          => 0.282,
+	ACP_VERSION          => 0.283,
 	ACP_REVISION         => 0,
 	ACP_SERVER           => 'http://prozer.at.nsu.ru/acp/get.php'
 };

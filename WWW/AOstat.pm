@@ -4,22 +4,20 @@ use strict;
 use MIME::Base64;
 use LWP::UserAgent;
 
-use constant
-{
-	URL_STAT     => 'https://stat.academ.org/ugui/api.php?OP=10&KEY=d3d9446802a44259755d38e6d163e820',
-	URL_TURN_ON  => 'https://stat.academ.org/ugui/api.php?OP=2&USERID=4397&STATUS=ON&KEY=86c170e1c56dab3194474dbb4e34a775',
-	URL_TURN_OFF => 'https://stat.academ.org/ugui/api.php?OP=2&USERID=4397&STATUS=OFF&KEY=499f46e2e46da8608bc04b95694dfbfd',
-	URL_USAGE    => 'https://stat.academ.org/ugui/index.php?pid=504',
-	URL_CREDIT   => 'https://stat.academ.org/ugui/index.php?pid=500',
-};
+my $URL_STAT     = 'https://stat.academ.org/ugui/api.php?OP=10&KEY=d3d9446802a44259755d38e6d163e820';
+my $URL_TURN_ON  = 'https://stat.academ.org/ugui/api.php?OP=2&USERID={UID}&STATUS=ON&KEY=86c170e1c56dab3194474dbb4e34a775';
+my $URL_TURN_OFF = 'https://stat.academ.org/ugui/api.php?OP=2&USERID={UID}&STATUS=OFF&KEY=499f46e2e46da8608bc04b95694dfbfd';
+my $URL_USAGE    = 'https://stat.academ.org/ugui/index.php?pid=504';
+my $URL_CREDIT   = 'https://stat.academ.org/ugui/index.php?pid=500';
 
-our $VERSION = 0.1;
+
+our $VERSION = 0.2;
 
 sub new
 {
 	my ($class, %lwp_opts) = @_;
 	
-	my $self = {ua=>LWP::UserAgent->new(agent=>'', timeout=>10, default_headers=>HTTP::Headers->new(Pragma=>'no-cache', Accept=>'image/gif, image/x-xbitmap, image/jpeg, image/pjpeg, */*'), %lwp_opts)};
+	my $self = {uid => undef, ua => LWP::UserAgent->new(agent=>'', timeout=>10, default_headers=>HTTP::Headers->new(Pragma=>'no-cache', Accept=>'image/gif, image/x-xbitmap, image/jpeg, image/pjpeg, */*'), %lwp_opts)};
 	bless $self, $class;
 }
 
@@ -35,7 +33,7 @@ sub login
 	
 	unless($nocheck)
 	{
-		my $page = $self->geturl(URL_STAT);
+		my $page = $self->geturl($URL_STAT);
 		$page =~ /ERR=(\d+)/ or return 0;
 		unless($1 == 0)
 		{
@@ -52,9 +50,16 @@ sub stat
 {
 	my ($self) = @_;
 	
-	my $page = $self->geturl(URL_STAT);
+	my $page = $self->geturl($URL_STAT);
 	return () unless $page =~ /ERR=(\d+)/;
 	return () if $1 != 0;
+	
+	unless(defined $self->{uid})
+	{
+		($self->{uid}) = $page =~ /USERID=(\d+)/;
+		$URL_TURN_ON  =~ s/\{UID\}/$self->{uid}/;
+		$URL_TURN_OFF =~ s/\{UID\}/$self->{uid}/;
+	}
 	
 	my ($traff) = $page =~ /REMAINS_MB=(-?\d+)/;
 	my ($money) = $page =~ /REMAINS_RUR=(-?\d+(?:.\d{1,2})?)/;
@@ -77,12 +82,12 @@ sub turn
 	
 	if($act)
 	{ # turn on
-		$page = $self->geturl(URL_TURN_ON);
+		$page = $self->geturl($URL_TURN_ON);
 		
 	}
 	else
 	{ # turn off
-		$page = $self->geturl(URL_TURN_OFF);
+		$page = $self->geturl($URL_TURN_OFF);
 	}
 	
 	return 0 unless $page =~ /ERR=(\d+)/;
@@ -93,7 +98,7 @@ sub usage
 {
 	my ($self, $regexp) = @_;
 	
-	my $page = $self->geturl(URL_USAGE);
+	my $page = $self->geturl($URL_USAGE);
 	my($mday, $mon) = (localtime)[3, 4];
 	($mday, $mon) = (sprintf('%02d', $mday), sprintf('%02d', $mon+1));
 	
@@ -126,7 +131,7 @@ sub credit
 {
 	my($self, $regexp) = @_;
 	
-	my $page = $self->geturl(URL_CREDIT);
+	my $page = $self->geturl($URL_CREDIT);
 	$regexp = '<span class="info_right">(\d+).+?\..+?\(.+?: (\d+)\)' unless $regexp;
 	my ($cred_sum, $cred_time) = $page =~ $regexp;
 	
