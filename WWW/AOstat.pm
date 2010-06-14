@@ -8,10 +8,9 @@ my $URL_STAT     = 'https://stat.academ.org/ugui/api.php?OP=10&KEY=d3d9446802a44
 my $URL_TURN_ON  = 'https://stat.academ.org/ugui/api.php?OP=2&USERID={UID}&STATUS=ON&KEY=86c170e1c56dab3194474dbb4e34a775';
 my $URL_TURN_OFF = 'https://stat.academ.org/ugui/api.php?OP=2&USERID={UID}&STATUS=OFF&KEY=499f46e2e46da8608bc04b95694dfbfd';
 my $URL_USAGE    = 'https://stat.academ.org/ugui/index.php?pid=504';
-my $URL_CREDIT   = 'https://stat.academ.org/ugui/index.php?pid=500';
 
 
-our $VERSION = 0.2;
+our $VERSION = 0.3;
 
 sub new
 {
@@ -63,6 +62,7 @@ sub stat
 	
 	my ($traff) = $page =~ /REMAINS_MB=(-?\d+)/;
 	my ($money) = $page =~ /REMAINS_RUR=(-?\d+(?:.\d{1,2})?)/;
+	my ($cred_sum, $cred_time) =~ /CREDIT=(\d+);(\d+)/;
 	my $status  = index($page, ';OFF') == -1
 			? 
 				index($page, ';ON') == -1 ? 
@@ -71,7 +71,7 @@ sub stat
 			:
 			0;
 	
-	return ($traff, $money, $status);
+	return ($traff, $money, $status, $cred_sum, $cred_time);
 }
 
 sub turn
@@ -125,17 +125,6 @@ sub usage
 	}
 	
 	return ($traff || $money) ? ($traff, $money) : ();
-}
-
-sub credit
-{
-	my($self, $regexp) = @_;
-	
-	my $page = $self->geturl($URL_CREDIT);
-	$regexp = '<span class="info_right">(\d+).+?\..+?\(.+?: (\d+)\)' unless $regexp;
-	my ($cred_sum, $cred_time) = $page =~ $regexp;
-	
-	return ($cred_sum || $cred_time) ? ($cred_sum, $cred_time) : ();
 }
 
 sub geturl
@@ -201,15 +190,16 @@ Example:
 
 =item $stat->stat()
 
-Trying to get user statistic. Return list of the traffic (mb) remained, money (rub) remained and online
-status on success. On failure return empty list, which means false in the list context.
+Trying to get user statistic. Return list of the traffic (mb) remained, money (rub) remained, online
+status, credit amount (rub) and days remains ( If credit not used this will be (0,0) ) on success. On failure return empty list, which means false in the list context.
 
 Example:
 
-	if(my ($traff, $money, $status) = $stat->stat)
+	if(my ($traff, $money, $status, $cred_sum, $cred_time) = $stat->stat)
 	{
 		print "Statistic: traffic - $traff, money - $money, status - "
-		      .($status == 1 ? "online" : $status == 0 ? "offline" : "inaccessible");
+		      .($status == 1 ? "online" : $status == 0 ? "offline" : "inaccessible").
+		      .($cred_sum ? "credit - $cred_sum rub, $cred_time days" : "credit not used");
 	}
 	else
 	{
@@ -239,24 +229,6 @@ Example:
 	else
 	{
 		die("Failed to get usage");
-	}
-
-=item $stat->credit($regexp)
-
-Getting credit amount and days remains. If credit used it return list of the credit
-amount (rub) and days remains. Otherwise it return empty list. You can pass optional parameter
-which should be regular expression if you want to override default regular expression
-(for example if it already does not work).
-
-Example:
-
-	if(my ($cred_sum, $cred_time) = $stat->credit)
-	{
-		print "You have credit $cred_sum ($cred_time)";
-	}
-	else
-	{
-		print "You have not credit";
 	}
 
 =item $stat->geturl($url , $anonym)
