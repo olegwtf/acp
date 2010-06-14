@@ -62,7 +62,7 @@ sub stat
 	
 	my ($traff) = $page =~ /REMAINS_MB=(-?\d+)/;
 	my ($money) = $page =~ /REMAINS_RUR=(-?\d+(?:.\d{1,2})?)/;
-	my ($cred_sum, $cred_time) =~ /CREDIT=(\d+);(\d+)/;
+	my ($cred_sum, $cred_time) = $page =~ /CREDIT=(\d+);(\d+)/;
 	my $status  = index($page, ';OFF') == -1
 			? 
 				index($page, ';ON') == -1 ? 
