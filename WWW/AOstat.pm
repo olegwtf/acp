@@ -7,7 +7,6 @@ use LWP::UserAgent;
 my $URL_STAT     = 'https://stat.academ.org/ugui/api.php?OP=10&KEY=d3d9446802a44259755d38e6d163e820';
 my $URL_TURN_ON  = 'https://stat.academ.org/ugui/api.php?OP=2&USERID={UID}&STATUS=ON&KEY=86c170e1c56dab3194474dbb4e34a775';
 my $URL_TURN_OFF = 'https://stat.academ.org/ugui/api.php?OP=2&USERID={UID}&STATUS=OFF&KEY=499f46e2e46da8608bc04b95694dfbfd';
-my $URL_USAGE    = 'https://stat.academ.org/ugui/index.php?pid=504';
 
 
 our $VERSION = 0.3;
@@ -94,39 +93,6 @@ sub turn
 	return !$1;
 }
 
-sub usage
-{
-	my ($self, $regexp) = @_;
-	
-	my $page = $self->geturl($URL_USAGE);
-	my($mday, $mon) = (localtime)[3, 4];
-	($mday, $mon) = (sprintf('%02d', $mday), sprintf('%02d', $mon+1));
-	
-	if($regexp)
-	{
-		$regexp =~ s/\{mon\}/$mon/;
-		$regexp =~ s/\{mday\}/$mday/;
-	}
-	else
-	{
-		$regexp = qr!<td>([\d.]+)[^<]{0,10}</td>.?\n\s+<td>([\d.]+)\s*(.)[^<]{0,10}</td>.?\n\s+<td nowrap>\d+-$mon-$mday</td>!;
-	}
-
-	my ($money, $traff, $measure) = $page =~ $regexp;
-	$measure = ord($measure);
-	
-	if($measure == 202)
-	{ # kb
-		$traff = sprintf('%.2f', $traff/1024);
-	}
-	elsif($measure == 195)
-	{ # gb
-		$traff *= 1024;
-	}
-	
-	return ($traff || $money) ? ($traff, $money) : ();
-}
-
 sub geturl
 {
 	my ($self, $url, $anonym) = @_;
@@ -160,10 +126,8 @@ WWW::AOstat - Implementation of the stat.academ.org API
 =head1 DESCRIPTION
 
 The C<WWW::AOstat> is a class implementing stat.academ.org API (only useful parts of the API).
-Some useful things made passing over the API, because of its incompleteness. With this module
-you can login to stat.academ.org, turn on/off internet, get actual balance and online status.
-Also you can get present traffic/money usage, amount of the credit (if you use it) and number
-of days remains.
+With this module you can login to stat.academ.org, turn on/off internet, get actual balance and online status.
+Also you can get amount of the credit (if you use it) and number of days remains.
 
 =head1 METHODS
 
@@ -189,7 +153,6 @@ Example:
 	$stat->login('qwerty', '1234') or die('Login failed');
 
 =item $stat->stat()
-
 Trying to get user statistic. Return list of the traffic (mb) remained, money (rub) remained, online
 status, credit amount (rub) and days remains ( If credit not used this will be (0,0) ) on success. On failure return empty list, which means false in the list context.
 
@@ -210,26 +173,6 @@ Example:
 
 Trying to turn on the internet if argument is true and turn off if argument is false.
 Return true on success and false on failure.
-
-=item $stat->usage($regexp)
-
-Trying to get present traffic and money usage. Return list of the traffic (mb) and money (rub) on
-success. On failure return empty list, which means false in the list context. You can
-pass optional parameter which should be regular expression if you want to override
-default regular expression (for example if it already does not work). This regexp could contain
-special templates {mon} and {mday} which would be replaced by current month number and day of the
-month accordingly.
-
-Example:
-
-	if(my ($traff, $money) = $stat->usage)
-	{
-		print "Usage: traffic - $tarff, money - $money";
-	}
-	else
-	{
-		die("Failed to get usage");
-	}
 
 =item $stat->geturl($url , $anonym)
 

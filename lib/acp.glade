@@ -338,7 +338,7 @@
                             <property name="visible">True</property>
                             <property name="can_focus">True</property>
                             <property name="invisible_char">&#x25CF;</property>
-                            <property name="adjustment">1 1 7 1 1 0</property>
+                            <property name="adjustment">2 2 7 1 1 0</property>
                           </widget>
                           <packing>
                             <property name="top_attach">3</property>
@@ -619,12 +619,13 @@
                         <property name="border_width">5</property>
                         <property name="orientation">vertical</property>
                         <child>
-                          <widget class="GtkCheckButton" id="checkbutton6">
-                            <property name="label" translatable="yes">&#x410;&#x432;&#x442;&#x43E;&#x43E;&#x431;&#x43D;&#x43E;&#x432;&#x43B;&#x435;&#x43D;&#x438;&#x435; &#x43A;&#x43E;&#x43D;&#x444;&#x438;&#x433;&#x430;</property>
+                          <widget class="GtkCheckButton" id="checkbutton7">
+                            <property name="label" translatable="yes">&#x421;&#x43E;&#x43E;&#x431;&#x449;&#x430;&#x442;&#x44C; &#x43E; &#x43D;&#x43E;&#x432;&#x43E;&#x439; &#x432;&#x435;&#x440;&#x441;&#x438;&#x438; &#x43F;&#x440;&#x43E;&#x433;&#x440;&#x430;&#x43C;&#x43C;&#x44B;</property>
                             <property name="visible">True</property>
                             <property name="can_focus">True</property>
                             <property name="receives_default">False</property>
-                            <property name="tooltip" translatable="yes">&#x41E;&#x431;&#x43D;&#x43E;&#x432;&#x43B;&#x44F;&#x442;&#x44C; &#x43A;&#x43E;&#x43D;&#x444;&#x438;&#x433; &#x441; &#x441;&#x430;&#x439;&#x442;&#x430; &#x43F;&#x440;&#x43E;&#x433;&#x440;&#x430;&#x43C;&#x43C;&#x44B;. &#x41E;&#x43A;&#x430;&#x436;&#x435;&#x442;&#x441;&#x44F; &#x43F;&#x43E;&#x43B;&#x435;&#x437;&#x43D;&#x44B;&#x43C; &#x43A;&#x43E;&#x433;&#x434;&#x430; &#x43D;&#x430; &#x441;&#x442;&#x440;&#x430;&#x43D;&#x438;&#x446;&#x435; &#x441;&#x442;&#x430;&#x442;&#x438;&#x441;&#x442;&#x438;&#x43A;&#x438; &#x43F;&#x440;&#x43E;&#x438;&#x437;&#x43E;&#x439;&#x434;&#x443;&#x442; &#x438;&#x437;&#x43C;&#x435;&#x43D;&#x435;&#x43D;&#x438;&#x44F; &#x438; &#x43F;&#x440;&#x43E;&#x433;&#x440;&#x430;&#x43C;&#x43C;&#x430; &#x43F;&#x435;&#x440;&#x435;&#x441;&#x442;&#x430;&#x43D;&#x435;&#x442; &#x440;&#x430;&#x431;&#x43E;&#x442;&#x430;&#x442;&#x44C;</property>
+                            <property name="has_tooltip">True</property>
+                            <property name="tooltip" translatable="yes">&#x41F;&#x440;&#x43E;&#x432;&#x435;&#x440;&#x44F;&#x442;&#x44C; &#x434;&#x43E;&#x441;&#x442;&#x443;&#x43F;&#x43D;&#x430; &#x43B;&#x438; &#x43D;&#x43E;&#x432;&#x430;&#x44F; &#x432;&#x435;&#x440;&#x441;&#x438;&#x44F; &#x43F;&#x440;&#x43E;&#x433;&#x440;&#x430;&#x43C;&#x43C;&#x44B;</property>
                             <property name="draw_indicator">True</property>
                           </widget>
                           <packing>
@@ -632,21 +633,9 @@
                           </packing>
                         </child>
                         <child>
-                          <widget class="GtkCheckButton" id="checkbutton7">
-                            <property name="label" translatable="yes">&#x421;&#x43E;&#x43E;&#x431;&#x449;&#x430;&#x442;&#x44C; &#x43E; &#x43D;&#x43E;&#x432;&#x43E;&#x439; &#x432;&#x435;&#x440;&#x441;&#x438;&#x438; &#x43F;&#x440;&#x43E;&#x433;&#x440;&#x430;&#x43C;&#x43C;&#x44B;</property>
-                            <property name="visible">True</property>
-                            <property name="can_focus">True</property>
-                            <property name="receives_default">False</property>
-                            <property name="tooltip" translatable="yes">&#x41F;&#x440;&#x43E;&#x432;&#x435;&#x440;&#x44F;&#x442;&#x44C; &#x434;&#x43E;&#x441;&#x442;&#x443;&#x43F;&#x43D;&#x430; &#x43B;&#x438; &#x43D;&#x43E;&#x432;&#x430;&#x44F; &#x432;&#x435;&#x440;&#x441;&#x438;&#x44F; &#x43F;&#x440;&#x43E;&#x433;&#x440;&#x430;&#x43C;&#x43C;&#x44B;</property>
-                            <property name="draw_indicator">True</property>
-                          </widget>
-                          <packing>
-                            <property name="position">1</property>
-                          </packing>
-                        </child>
-                        <child>
                           <widget class="GtkHBox" id="hbox6">
                             <property name="visible">True</property>
+                            <property name="has_tooltip">True</property>
                             <property name="tooltip" translatable="yes">&#x418;&#x43D;&#x442;&#x435;&#x440;&#x432;&#x430;&#x43B; &#x43F;&#x440;&#x43E;&#x432;&#x435;&#x440;&#x43A;&#x438; &#x43E;&#x431;&#x43D;&#x43E;&#x432;&#x43B;&#x435;&#x43D;&#x438;&#x439;</property>
                             <child>
                               <widget class="GtkLabel" id="label13">
@@ -661,7 +650,7 @@
                             </child>
                           </widget>
                           <packing>
-                            <property name="position">2</property>
+                            <property name="position">1</property>
                           </packing>
                         </child>
                         <child>
@@ -693,7 +682,7 @@
                             </child>
                           </widget>
                           <packing>
-                            <property name="position">3</property>
+                            <property name="position">2</property>
                           </packing>
                         </child>
                       </widget>

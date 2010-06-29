@@ -21,7 +21,6 @@ use constant
 	ICON_GRAY            => '/usr/share/apps/acp/acp_gray.png',
 	ICON_MAIN            => '/usr/share/apps/acp/acp_main.ico',
 	CONFIG               => '/usr/share/apps/acp/acp.conf',
-	CONFIG_PL            => '/usr/share/apps/acp/config.pl',
 	ACP_VERSION          => 0.283,
 	ACP_REVISION         => 0,
 	ACP_SERVER           => 'http://prozer.at.nsu.ru/acp/get.php'
@@ -36,10 +35,8 @@ $SIG{ALRM} = $SIG{USR1} = 'IGNORE';
 #checking configuration in ~/
 mkdir $acp_path                                      or die "Can't create dir $acp_path"            unless -d  $acp_path;
 put_file("$acp_path/acp.conf",  get_file(CONFIG))    or die "Can't create file $acp_path/acp.conf"  unless -f "$acp_path/acp.conf";
-put_file("$acp_path/config.pl", get_file(CONFIG_PL)) or die "Can't create file $acp_path/config.pl" unless -f "$acp_path/config.pl";
 chmod(0600, "$acp_path/acp.conf")                    or die "Can't chmod file $acp_path/acp.conf"   unless (stat("$acp_path/acp.conf"))[2] == 33152;
 
-require "$acp_path/config.pl";
 require "$acp_path/acp.conf";
 
 our %config;
@@ -55,8 +52,8 @@ unless($child)
 	#this is child process: background worker
 	require WWW::AOstat;
 	
-	my $stat = WWW::AOstat->new(timeout=>10);
-	$stat->login($config{login}, $config{password}, 1);
+	my $ao_stat = WWW::AOstat->new(timeout=>10);
+	$ao_stat->login($config{login}, $config{password}, 1);
 	
 	my $parent = getppid;
 	
@@ -71,7 +68,7 @@ unless($child)
 		{	#check login and password
 			chomp(my $login = <READER_CHILD>);
 			chomp(my $passw = <READER_CHILD>);
-			syswrite WRITER_CHILD, MSG_CHECK_LP."\n".$stat->login($login, $passw)."\n";
+			syswrite WRITER_CHILD, MSG_CHECK_LP."\n".$ao_stat->login($login, $passw)."\n";
 			kill 'USR1', $parent;
 		}
 		elsif($msg == MSG_GET_BAL)
@@ -80,48 +77,38 @@ unless($child)
 		}
 		elsif($msg == MSG_TURN_ON)
 		{	#turn on internet and update balance information
-			$stat->turn(1);
+			$ao_stat->turn(1);
 			kill 'ALRM', $$;
 		}
 		elsif($msg == MSG_TURN_OFF)
 		{	#turn off internet and update balance information
-			$stat->turn(0);
+			$ao_stat->turn(0);
 			kill 'ALRM', $$;
 		}
 		elsif($msg == MSG_RELOAD_CONF)
 		{	#reload configuration and update balance information
-			do "$acp_path/config.pl";
 			do "$acp_path/acp.conf";
 			$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
-			$stat->login($config{login}, $config{password}, 1);
+			$ao_stat->login($config{login}, $config{password}, 1);
 			kill 'ALRM', $$;
 		}
 		elsif($msg == MSG_CHECK_UPD)
-		{	#check updates of config and program
+		{	#check for updates
 			chomp(my $what = <READER_CHILD>);
-			my $msg = '';
-			my ($acp, $conf, $user_act) = split '', $what;
+			$msg = '';
+			my ($acp, $user_act) = split '', $what;
 
-			my ($acp_v, $conf_v) = split(/__/, $stat->geturl(ACP_SERVER.'?cat=last', 1));
+			my ($acp_v, undef) = split(/__/, $ao_stat->geturl(ACP_SERVER.'?cat=last', 1));
 	
-			unless($acp_v && $conf_v)
-			{
-				$msg = 'Сервер обновлений недоступен';
-			}
-			elsif($acp && $acp_v > ACP_VERSION)
+			if($acp && $acp_v =~ /^[\d.]+$/ && $acp_v > ACP_VERSION)
 			{
 				$msg = "Доступна для скачивания ACP версии $acp_v";
 			}
-			elsif($conf && $conf_v > $config{version})
-			{
-				put_file("$acp_path/config.pl", $stat->geturl(ACP_SERVER.'?cat=last_config', 1));
-				do "$acp_path/config.pl";
-				$msg = "Конфиг обновлен до версии $conf_v";
-			}
 			elsif($user_act)
-			{
-				$msg = "Вы используете самую последнюю версию программы: $acp_v/$conf_v";
+			{ #no updates, notify user
+				$msg = "Вы используете самую последнюю версию программы: " . ACP_VERSION;
 			}
+			
 			utf8::encode($msg);
 
 			syswrite WRITER_CHILD, MSG_CHECK_UPD."\n$msg\n";
@@ -138,18 +125,17 @@ unless($child)
 	
 	$SIG{ALRM} = sub
 	{	#get statistics: balance, etc
-		my ($traff, $money, $status, $cred_sum, $cred_time) = $stat->stat();
+		my ($traff, $money, $status, $cred_sum, $cred_time) = $ao_stat->stat();
 		$status = -1 unless defined $status;
-		my ($u_traff, $u_money) = $stat->usage($config{preg_usage});
 		
-		syswrite WRITER_CHILD, MSG_GET_BAL."\n$traff|$money|$status|$u_traff|$u_money|$cred_sum|$cred_time\n";
+		syswrite WRITER_CHILD, MSG_GET_BAL."\n$traff|$money|$status|$cred_sum|$cred_time\n";
 		kill 'USR1', $parent;
 		alarm $config{stat_refresh}*60;
 	};
 	
 	$SIG{INT} = $SIG{HUP} = $SIG{TERM} = sub
 	{	#quitting
-		$stat->turn(0) if $config{inet_disable};
+		$ao_stat->turn(0) if $config{inet_disable};
 		exit;
 	};
 	
@@ -173,7 +159,7 @@ $SIG{USR1} = \&sig_usr1;
 $SIG{HUP} = $SIG{TERM} = $SIG{INT} = \&on_quit;
 
 require Gtk2::Notify;
-require Gtk2::GladeXML;
+require Gtk2::GladeXML; # TODO: move to gtk builder
 
 Gtk2->init;
 Gtk2::Notify->init('XY');
@@ -224,9 +210,6 @@ $cred_notify_spin->set_value($config{cred_notify_val});
 my $period_notify_spin = $glade->get_widget('spinbutton5');
 $period_notify_spin->set_value($config{period_notify});
 
-my $conf_upd_check = $glade->get_widget('checkbutton6');
-$conf_upd_check->set_active($config{conf_update});
-
 my $acp_upd_check = $glade->get_widget('checkbutton7');
 $acp_upd_check->set_active($config{acp_update});
 
@@ -262,7 +245,7 @@ $menu->append($menu_opt);
 
 my $notify = Gtk2::Notify->new('Academ.org Control Panel');
 $notify->set_timeout(10000);
-Glib::Timeout->add($config{int_update}*1000*60*60, \&on_checkupd); #timeout in hours to check update of the config/program
+Glib::Timeout->add($config{int_update}*1000*60*60, \&on_checkupd); #timeout in hours to check updates
 Glib::Timeout->add(10*1000, sub{ on_checkupd(); return 0 });
 Glib::Timeout->add(1*1000,  sub{ notify("Задайте логин и пароль от страницы статистики") unless $config{login} && $config{password}; return 0 });
 Gtk2::AboutDialog->set_url_hook(sub{});
@@ -296,7 +279,6 @@ sub sig_usr1
 		{
 			if(save_settings())
 			{
-				do "$acp_path/config.pl";
 				do "$acp_path/acp.conf";
 				$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
 				syswrite WRITER_PARENT, MSG_RELOAD_CONF."\n";
@@ -309,7 +291,7 @@ sub sig_usr1
 	{
 		
 		chomp(my $stat = <READER_PARENT>);
-		my ($traff, $money, $status, $u_traff, $u_money, $cred_sum, $cred_time) = split '\|', $stat;
+		my ($traff, $money, $status, $cred_sum, $cred_time) = split '\|', $stat;
 		my $bal = ($money||0)." руб / ".($traff||0)." мб";
 		$online = $status;
 
@@ -317,7 +299,7 @@ sub sig_usr1
 		put_file("$acp_path/acp.log", "[".date()."]\t".sprintf('%-20s', $bal)."\t$msg\n", '>>')
 		or say_msg("Ошибка записи в файл `$acp_path/acp.log'", 'error') if $config{do_log};
 		
-		$tray_icon->set_tooltip("Баланс: $bal".($u_traff ? "\nСегодня: $u_money руб / $u_traff мб" : "").($cred_sum ? "\nКредит: $cred_sum руб ($cred_time дн)" : ""));
+		$tray_icon->set_tooltip("Баланс: $bal".($cred_sum ? "\nКредит: $cred_sum руб ($cred_time дн)" : ""));
 		$tray_icon->set_from_file($icon);
 		
 		if($config{cred_notify} && $cred_time && ($cred_time < $config{cred_notify_val} || on_holiday($cred_time)) && !$upd && $online!=-1)
@@ -455,12 +437,12 @@ sub on_click
 
 sub on_checkupd
 {
-	my $all = $_[1]+0;
-	my ($acp, $conf) = ($config{acp_update}||$all, $config{conf_update}||$all);
-	if($acp || $conf)
+	my $user_act = $_[1]+0;
+	my $acp = $config{acp_update}||$user_act;
+	if($acp)
 	{
 		$tray_icon->set_from_file(ICON_WAIT);
-		syswrite WRITER_PARENT, MSG_CHECK_UPD."\n$acp$conf$all\n";
+		syswrite WRITER_PARENT, MSG_CHECK_UPD."\n$acp$user_act\n"; # will show message that there are no updates if there are no updates and $user_act
 		kill 'USR1', $child;
 	}
 	return 1;
@@ -534,7 +516,6 @@ sub save_settings
 	.'$config{cred_notify} = '.($cred_notify_check->get_active+0).";\n"
 	.'$config{cred_notify_val} = '.$cred_notify_spin->get_value.";\n"
 	.'$config{period_notify} = '.$period_notify_spin->get_value.";\n"
-	.'$config{conf_update} = '.($conf_upd_check->get_active+0).";\n"
 	.'$config{acp_update} = '.($acp_upd_check->get_active+0).";\n"
 	.'$config{int_update} = '.($interv_upd_spin->get_value).";\n"
 	.'$config{holidays} = ['.join(',', map($_->get_active+0, @holidays))."];\n1;\n";
