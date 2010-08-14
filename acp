@@ -14,14 +14,14 @@ use constant
 	MSG_CHECK_UPD        => 5,
 	MSG_CHILD_READY      => 6,
 	MSG_PARENT_NOT_READY => 7,
-	GLADE                => '/usr/share/apps/acp/acp.glade',
-	ICON_WAIT            => '/usr/share/apps/acp/acp_wait.png',
-	ICON_GREEN           => '/usr/share/apps/acp/acp_green.png',
-	ICON_BROWN           => '/usr/share/apps/acp/acp_brown.png',
-	ICON_GRAY            => '/usr/share/apps/acp/acp_gray.png',
-	ICON_MAIN            => '/usr/share/apps/acp/acp_main.ico',
-	CONFIG               => '/usr/share/apps/acp/acp.conf',
-	ACP_VERSION          => 0.283,
+	GLADE                => 'lib/acp.glade',
+	ICON_WAIT            => 'lib/acp_wait.png',
+	ICON_GREEN           => 'lib/acp_green.png',
+	ICON_BROWN           => 'lib/acp_brown.png',
+	ICON_GRAY            => 'lib/acp_gray.png',
+	ICON_MAIN            => 'lib/acp_main.ico',
+	CONFIG               => 'lib/acp.conf',
+	ACP_VERSION          => 0.284,
 	ACP_REVISION         => 0,
 	ACP_SERVER           => 'http://prozer.at.nsu.ru/acp/get.php'
 };
@@ -52,9 +52,7 @@ unless($child)
 	#this is child process: background worker
 	require WWW::AOstat;
 	
-	my $ao_stat = WWW::AOstat->new(timeout=>10);
-	$ao_stat->login($config{login}, $config{password}, 1);
-	
+	my $ao = WWW::AOstat->new($config{login}, $config{password}, timeout=>10);
 	my $parent = getppid;
 	
 	#close unused pipe link
@@ -68,28 +66,38 @@ unless($child)
 		{	#check login and password
 			chomp(my $login = <READER_CHILD>);
 			chomp(my $passw = <READER_CHILD>);
-			syswrite WRITER_CHILD, MSG_CHECK_LP."\n".$ao_stat->login($login, $passw)."\n";
+			
+			my $uid = $ao->try_login($login, $passw);
+			if($uid)
+			{
+				$ao->login($login);
+				$ao->password($passw);
+				$ao->uid($uid);
+			}
+			
+			syswrite WRITER_CHILD, MSG_CHECK_LP."\n$uid\n";
 			kill 'USR1', $parent;
 		}
 		elsif($msg == MSG_GET_BAL)
-		{	#check balance, redirect to ALRM handler
+		{	#check balance: redirect to ALRM handler
 			kill 'ALRM', $$;
 		}
 		elsif($msg == MSG_TURN_ON)
 		{	#turn on internet and update balance information
-			$ao_stat->turn(1);
+			$ao->turn(1);
 			kill 'ALRM', $$;
 		}
 		elsif($msg == MSG_TURN_OFF)
 		{	#turn off internet and update balance information
-			$ao_stat->turn(0);
+			$ao->turn(0);
 			kill 'ALRM', $$;
 		}
 		elsif($msg == MSG_RELOAD_CONF)
 		{	#reload configuration and update balance information
 			do "$acp_path/acp.conf";
 			$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
-			$ao_stat->login($config{login}, $config{password}, 1);
+			$ao->login($config{login});
+			$ao->password($config{password});
 			kill 'ALRM', $$;
 		}
 		elsif($msg == MSG_CHECK_UPD)
@@ -98,7 +106,7 @@ unless($child)
 			$msg = '';
 			my ($acp, $user_act) = split '', $what;
 
-			my ($acp_v, undef) = split(/__/, $ao_stat->geturl(ACP_SERVER.'?cat=last', 1));
+			my ($acp_v, undef) = split(/__/, $ao->geturl(ACP_SERVER.'?cat=last', '*', '*'));
 	
 			if($acp && $acp_v =~ /^[\d.]+$/ && $acp_v > ACP_VERSION)
 			{
@@ -125,7 +133,7 @@ unless($child)
 	
 	$SIG{ALRM} = sub
 	{	#get statistics: balance, etc
-		my ($traff, $money, $status, $cred_sum, $cred_time) = $ao_stat->stat();
+		my ($traff, $money, $status, $cred_sum, $cred_time) = $ao->stat();
 		$status = -1 unless defined $status;
 		
 		syswrite WRITER_CHILD, MSG_GET_BAL."\n$traff|$money|$status|$cred_sum|$cred_time\n";
@@ -135,7 +143,7 @@ unless($child)
 	
 	$SIG{INT} = $SIG{HUP} = $SIG{TERM} = sub
 	{	#quitting
-		$ao_stat->turn(0) if $config{inet_disable};
+		$ao->turn(0) if $config{inet_disable};
 		exit;
 	};
 	

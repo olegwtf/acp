@@ -2,62 +2,61 @@ package WWW::AOstat;
 
 use strict;
 use MIME::Base64;
+use Digest::MD5;
 use LWP::UserAgent;
+use Carp;
 
-my $URL_STAT     = 'https://stat.academ.org/ugui/api.php?OP=10&KEY=d3d9446802a44259755d38e6d163e820';
-my $URL_TURN_ON  = 'https://stat.academ.org/ugui/api.php?OP=2&USERID={UID}&STATUS=ON&KEY=86c170e1c56dab3194474dbb4e34a775';
-my $URL_TURN_OFF = 'https://stat.academ.org/ugui/api.php?OP=2&USERID={UID}&STATUS=OFF&KEY=499f46e2e46da8608bc04b95694dfbfd';
+our $VERSION = 0.4;
 
-
-our $VERSION = 0.3;
+my $URL_STAT = 'https://stat.academ.org/ugui/api.php?OP=10&KEY=d3d9446802a44259755d38e6d163e820';
+my $URL_TURN_ON = 'https://stat.academ.org/ugui/api.php?OP=2&USERID={UID}&STATUS=ON&KEY={KEY}';
+my $URL_TURN_OFF = 'https://stat.academ.org/ugui/api.php?OP=2&USERID={UID}&STATUS=OFF&KEY={KEY}';
 
 sub new
 {
-	my ($class, %lwp_opts) = @_;
+	my ($class, $login, $password, %lwp_opts) = @_;
 	
-	my $self = {uid => undef, ua => LWP::UserAgent->new(agent=>'', timeout=>10, default_headers=>HTTP::Headers->new(Pragma=>'no-cache', Accept=>'image/gif, image/x-xbitmap, image/jpeg, image/pjpeg, */*'), %lwp_opts)};
+	croak 'usage: new(login, password, [%lwp_opts])' unless defined($login) && defined($password);
+	
+	my $self = {
+			login => $login,
+			password => $password,
+			uid => undef,
+			ua => LWP::UserAgent->new(agent=>'', timeout=>10, default_headers=>HTTP::Headers->new(Pragma=>'no-cache', Accept=>'image/gif, image/x-xbitmap, image/jpeg, image/pjpeg, */*'), %lwp_opts),
+		};
+		
 	bless $self, $class;
 }
 
-sub login
+# get/set properties
+foreach my $key qw(login password uid)
 {
-	my ($self, $login, $password, $nocheck) = @_;
-	
-	my $old_login    = $self->{login};
-	my $old_password = $self->{password};
-	
-	$self->{login}    = $login;
-	$self->{password} = $password;
-	
-	unless($nocheck)
-	{
-		my $page = $self->geturl($URL_STAT);
-		$page =~ /ERR=(\d+)/ or return 0;
-		unless($1 == 0)
-		{
-			$self->{login}    = $old_login;
-			$self->{password} = $old_password;
-			return 0;
-		}
-	}
-	
-	return 1;
+      no strict 'refs';
+      *$key = sub
+      {
+            my $self = shift;
+      
+            return $self->{$key} = $_[0] if defined $_[0];
+            return $self->{$key};
+      }
 }
+
+sub try_login
+{
+	my ($self, $login, $password) = @_;
+	
+	my $page = $self->geturl($URL_STAT, $login, $password);
+	my ($uid) = $page =~ /USERID=(\d+)/;
+	return $uid;
+}
+
 
 sub stat
 {
 	my ($self) = @_;
 	
 	my $page = $self->geturl($URL_STAT);
-	return () unless $page =~ /ERR=(\d+)/;
-	return () if $1 != 0;
-	
-	unless(defined $self->{uid})
-	{
-		($self->{uid}) = $page =~ /USERID=(\d+)/;
-		$URL_TURN_ON  =~ s/\{UID\}/$self->{uid}/;
-		$URL_TURN_OFF =~ s/\{UID\}/$self->{uid}/;
-	}
+	return () if index($page, 'ERR=0') == -1;
 	
 	my ($traff) = $page =~ /REMAINS_MB=(-?\d+)/;
 	my ($money) = $page =~ /REMAINS_RUR=(-?\d+(?:.\d{1,2})?)/;
@@ -79,25 +78,40 @@ sub turn
 	
 	my $page;
 	
+	unless( $self->{uid} )
+	{
+		$self->{uid} = $self->try_login();
+	}
+	
 	if($act)
 	{ # turn on
-		$page = $self->geturl($URL_TURN_ON);
+		my $key = Digest::MD5::md5_hex('2' . $self->{uid} . 'ON');
+		my $url_turn_on = $URL_TURN_ON;
 		
+		$url_turn_on =~ s/\{UID\}/$self->{uid}/;
+		$url_turn_on =~ s/\{KEY\}/$key/;
+		
+		$page = $self->geturl($url_turn_on);
 	}
 	else
 	{ # turn off
-		$page = $self->geturl($URL_TURN_OFF);
+		my $key = Digest::MD5::md5_hex('2' . $self->{uid} . 'OFF');
+		my $url_turn_off = $URL_TURN_OFF;
+		
+		$url_turn_off =~ s/\{UID\}/$self->{uid}/;
+		$url_turn_off =~ s/\{KEY\}/$key/;
+		
+		$page = $self->geturl($url_turn_off);
 	}
 	
-	return 0 unless $page =~ /ERR=(\d+)/;
-	return !$1;
+	return index($page, 'ERR=0') != -1;
 }
 
 sub geturl
 {
-	my ($self, $url, $anonym) = @_;
+	my ($self, $url, $login, $password) = @_;
 	
-	return $self->{ua}->get($url, $anonym ? undef : Authorization=>"Basic ".encode_base64("$self->{login}:$self->{password}"))->content;
+	return $self->{ua}->get( $url, Authorization=>"Basic ".encode_base64( ($login||$self->{login}) . ':' . ($password||$self->{password}) ) )->content;
 }
 
 1;
@@ -112,16 +126,10 @@ WWW::AOstat - Implementation of the stat.academ.org API
 
  use WWW::AOstat;
  
- my $stat = WWW::AOstat->new(timeout=>10);
- if($stat->login('login', 'password'))
- {
-	$stat->turn(1);
-	my ($money, $traffic, $status) = $stat->stat();
- }
- else
- {
-	die('Login failed');
- }
+ my $stat = WWW::AOstat->new('login', 'password', timeout=>10);
+ 
+ $stat->turn(1);
+ my ($traff, $money, $status, $cred_sum, $cred_time) = $stat->stat();
 
 =head1 DESCRIPTION
 
@@ -133,28 +141,29 @@ Also you can get amount of the credit (if you use it) and number of days remains
 
 =over
 
-=item WWW::AOstat->new(%lwp_opts)
+=item WWW::AOstat->new($login, $password, %lwp_opts)
 
-Constructs new C<WWW::AOstat> object. You can pass options pairs as argument. This options
-would pass to LWP::UserAgent constructor.
-
-Example:
-
-	$stat = WWW::AOstat->new(timeout=>10, agent=>'Mozilla 5.0');
-
-=item $stat->login($login, $password , $nocheck_for_success)
-
-Trying to login to stat.academ.org . If optional parameter $nocheck_for_success set to true
-login method will not try to real login and will return true even if login or password is 
-incorrect. Otherwise return true on success and false on failure.
+Constructs new C<WWW::AOstat> object. $login and $password are login and password from stat.academ.org. Also you
+can pass options pairs as argument. This options would pass to LWP::UserAgent constructor.
 
 Example:
 
-	$stat->login('qwerty', '1234') or die('Login failed');
+	$stat = WWW::AOstat->new('user_login', 'user_password', timeout=>10, agent=>'Mozilla 5.0');
+
+=item $stat->try_login($login, $password)
+
+Trying to login to stat.academ.org with given login and password or with login from constructor if $login is undef
+and password from constructor if $password is undef. On success return user id and false on failure.
+
+Example:
+
+	my $uid = $stat->try_login('qwerty', '1234') or die('Login failed');
 
 =item $stat->stat()
+
 Trying to get user statistic. Return list of the traffic (mb) remained, money (rub) remained, online
-status, credit amount (rub) and days remains ( If credit not used this will be (0,0) ) on success. On failure return empty list, which means false in the list context.
+status, credit amount (rub) and days remains ( If credit not used this will be (0,0) ) on success.
+On failure return empty list, which means false in the list context.
 
 Example:
 
@@ -174,16 +183,33 @@ Example:
 Trying to turn on the internet if argument is true and turn off if argument is false.
 Return true on success and false on failure.
 
-=item $stat->geturl($url , $anonym)
+=item $stat->geturl($url, $login, $password)
 
 For private usage. But you can use it to get some external page which is not
 implemented by this module. It use GET method with Basic authorization which
-use your current login and password. If optional second parameter set to true
-it will not use Basic authorization.
+use your current login and password or $login and $password if given.
 
 Example:
 
-	my $page = $stat->geturl('http://google.ru', 1);
+	my $page = $stat->geturl('http://google.ru', 'anonym', 'anonym');
+
+=item $stat->login
+
+=item $stat->login($login)
+
+Get or set current user login
+
+=item $stat->password
+
+=item $stat->password($password)
+
+Get or set current user password
+
+=item $stat->uid
+
+=item $stat->uid($uid)
+
+Get or set current user id
 
 =back
 
