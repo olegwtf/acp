@@ -9,10 +9,10 @@ mkdir -p $tmp/usr/bin || exit
 cp acp $tmp/usr/bin || exit
 
 mkdir -p $tmp/usr/share/apps/acp || exit
-cp lib/* $tmp/usr/share/apps/acp || exit
+cp share/* $tmp/usr/share/apps/acp || exit
 
 mkdir -p $tmp/usr/share/perl5/WWW || exit
-cp WWW/* $tmp/usr/share/perl5/WWW || exit
+cp lib/WWW/* $tmp/usr/share/perl5/WWW || exit
 
 size=`du -ks $tmp/usr/ | cut -f1`
 version=`egrep -o 'ACP_VERSION[[:space:]]+=>[[:space:]]+[[:digit:].]+' acp | egrep -o '[[:digit:].]+'`

@@ -10,12 +10,12 @@ die()
 
 if grep /usr/share/apps/acp/ acp >/dev/null
 then
-	sed -i 's!/usr/share/apps/acp/!lib/!' acp
-	echo '/usr/share/apps/acp/ --> lib/'
-elif grep lib/ acp >/dev/null
+	sed -i 's@/usr/share/apps/acp/@share/@; s@#!/usr/bin/perl@#!/usr/bin/perl -I lib@' acp
+	echo '/usr/share/apps/acp/ --> share/'
+elif grep share/ acp >/dev/null
 then
-	sed -i 's!lib/!/usr/share/apps/acp/!' acp
-	echo 'lib/ --> /usr/share/apps/acp/'
+	sed -i 's@share/@/usr/share/apps/acp/@; s@#!/usr/bin/perl -I lib@#!/usr/bin/perl@' acp
+	echo 'share/ --> /usr/share/apps/acp/'
 else
 	die "can't reconfigure acp"
 fi
