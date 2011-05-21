@@ -1,117 +1,221 @@
-package WWW::AOstat;
+package WWW::AOstat::NB::Glib;
 
 use strict;
+use IO::Socket::SSL;
 use MIME::Base64;
 use Digest::MD5;
-use LWP::UserAgent;
-use Carp;
+use URI;
+use Net::HTTP::NB;
+use Net::HTTPS::NB;
+use Glib;
 
-our $VERSION = 0.4;
+our $VERSION = 0.01;
 
-my $URL_STAT = 'https://stat.academ.org/ugui/api.php?OP=10&KEY=d3d9446802a44259755d38e6d163e820';
-my $URL_TURN_ON = 'https://stat.academ.org/ugui/api.php?OP=2&USERID={UID}&STATUS=ON&KEY={KEY}';
-my $URL_TURN_OFF = 'https://stat.academ.org/ugui/api.php?OP=2&USERID={UID}&STATUS=OFF&KEY={KEY}';
+use constant {
+	URL_STAT     => 'https://stat.academ.org/ugui/api.php?OP=10&KEY=d3d9446802a44259755d38e6d163e820',
+	URL_TURN     => 'https://stat.academ.org/ugui/api.php?OP=2&USERID=%d&STATUS=%s&KEY=%s',
+	API_HOST     => 'stat.academ.org',
+};
 
 sub new
 {
-	my ($class, $login, $password, %lwp_opts) = @_;
-	
-	croak 'usage: new(login, password, [%lwp_opts])' unless defined($login) && defined($password);
+	my ($class) = @_;
 	
 	my $self = {
-			login => $login,
-			password => $password,
-			uid => undef,
-			ua => LWP::UserAgent->new(agent=>'', timeout=>10, default_headers=>HTTP::Headers->new(Pragma=>'no-cache', Accept=>'image/gif, image/x-xbitmap, image/jpeg, image/pjpeg, */*'), %lwp_opts),
-		};
+			login    => '',
+			password => '',
+			uid      => '',
+			page     => '',
+			update   => 0,
+	};
 		
 	bless $self, $class;
 }
 
-# get/set properties
-foreach my $key qw(login password uid)
+sub login
 {
-      no strict 'refs';
-      *$key = sub
-      {
-            my $self = shift;
-      
-            return $self->{$key} = $_[0] if defined $_[0];
-            return $self->{$key};
-      }
-}
-
-sub try_login
-{
-	my ($self, $login, $password) = @_;
+	my ($self, $login, $password, $cb) = @_;
 	
-	my $page = $self->geturl($URL_STAT, $login, $password);
-	my ($uid) = $page =~ /USERID=(\d+)/;
-	return $uid;
+	$self->{tmp_login} = $self->{login};
+	$self->{tmp_password} = $self->{password};
+	$self->{login} = $login;
+	$self->{password} = $password;
+	
+	$self->geturl(
+		URL_STAT,
+		sub {
+			if (my ($uid) = $_[0] =~ /USERID=(\d+)/) {
+				$self->{uid} = $uid;
+				$self->{page} = $_[0];
+				$self->{update} = time();
+				$cb->($uid);
+			}
+			else {
+				$self->{login} = $self->{tmp_login};
+				$self->{password} = $self->{tmp_password};
+				$cb->();
+			}
+		}
+	);
 }
-
 
 sub stat
 {
-	my ($self) = @_;
+	my ($self, $cb) = @_;
 	
-	my $page = $self->geturl($URL_STAT);
-	return () if index($page, 'ERR=0') == -1;
+	my $cached = exists($self->{page}) && time() - $self->{update} == 0;
 	
-	my ($traff) = $page =~ /REMAINS_MB=(-?\d+)/;
-	my ($money) = $page =~ /REMAINS_RUR=(-?\d+(?:.\d{1,2})?)/;
-	my ($cred_sum, $cred_time) = $page =~ /CREDIT=(\d+);(\d+)/;
-	my $status  = index($page, ';OFF') == -1
-			? 
-				index($page, ';ON') == -1 ? 
-					-1 : 
-					 1
-			:
-			0;
+	my $sub = sub {
+		return $cb->() if index($_[0], 'ERR=0') == -1;
+		
+		my ($traff) = $_[0] =~ /REMAINS_MB=(-?\d+)/;
+		my ($money) = $_[0] =~ /REMAINS_RUR=(-?\d+(?:.\d{1,2})?)/;
+		my ($cred_sum, $cred_time) = $_[0] =~ /CREDIT=(\d+);(\d+)/;
+		my $status  = index($_[0], ';OFF') == -1
+				? 
+					index($_[0], ';ON') == -1 ? 
+						-1 : 
+						 1
+				:
+				0;
+		if (!$cached) {
+			$self->{page} = $_[0];
+			$self->{update} = time();
+		}
+		
+		$cb->($traff, $money, $status, $cred_sum, $cred_time);
+	};
 	
-	return ($traff, $money, $status, $cred_sum, $cred_time);
+	if ($cached) {
+		$sub->($self->{page});
+	}
+	else {
+		$self->geturl(
+			URL_STAT,
+			$sub
+		);
+	}
 }
 
 sub turn
 {
-	my ($self, $act) = @_;
+	my ($self, $act, $cb) = @_;
 	
-	my $page;
+	my $key = Digest::MD5::md5_hex('2' . $self->{uid} .($act ? 'ON' : 'OFF'));
+	my $url = sprintf(URL_TURN, $self->{uid}, $act ? 'ON' : 'OFF', $key);
 	
-	unless( $self->{uid} )
-	{
-		$self->{uid} = $self->try_login();
-	}
-	
-	if($act)
-	{ # turn on
-		my $key = Digest::MD5::md5_hex('2' . $self->{uid} . 'ON');
-		my $url_turn_on = $URL_TURN_ON;
-		
-		$url_turn_on =~ s/\{UID\}/$self->{uid}/;
-		$url_turn_on =~ s/\{KEY\}/$key/;
-		
-		$page = $self->geturl($url_turn_on);
-	}
-	else
-	{ # turn off
-		my $key = Digest::MD5::md5_hex('2' . $self->{uid} . 'OFF');
-		my $url_turn_off = $URL_TURN_OFF;
-		
-		$url_turn_off =~ s/\{UID\}/$self->{uid}/;
-		$url_turn_off =~ s/\{KEY\}/$key/;
-		
-		$page = $self->geturl($url_turn_off);
-	}
-	
-	return index($page, 'ERR=0') != -1;
+	$self->geturl(
+		$url,
+		sub {
+			$cb->( index($_[0], 'ERR=0') != -1 );
+		}
+	);
 }
 
 sub geturl
 {
-	my ($self, $url, $login, $password) = @_;
+	my ($self, $url, $cb) = @_;
 	
-	return $self->{ua}->get( $url, Authorization=>"Basic ".encode_base64( ($login||$self->{login}) . ':' . ($password||$self->{password}) ) )->content;
+	my $uri = URI->new($url);
+	eval { # URI may break because of the bad url
+		my $class = $uri->scheme eq 'http' ? 'Net::HTTP::NB' : 'Net::HTTPS::NB';
+		my $sock = $class->new(Host => $uri->host, PeerPort => $uri->port, Blocking => 0); # FIXME make non-blocking host resolving with Net::DNS
+		
+		Glib::IO->add_watch(
+			fileno($sock), 'out', \&_geturl_write_request,
+			[
+				$sock, $cb,
+				GET => $uri->path_query,
+				$uri->host eq API_HOST ?
+					(Authorization => "Basic " . encode_base64($self->{login} . ':' . $self->{password}))
+					:
+					()
+			]
+		);
+	} or return;
+	
+	return 1;
+}
+
+sub _geturl_write_request
+{
+	my ($fd, $cond) = splice @_, 0, 2;
+	
+	if ($_[0][0]->isa('Net::HTTPS::NB') && !$_[0][0]->connected) {
+		if ($HTTPS_ERROR == HTTPS_WANT_READ) {
+			Glib::IO->add_watch(
+				$fd, 'in', \&_geturl_write_request,
+				$_[0]
+			)
+		}
+		elsif ($HTTPS_ERROR == HTTPS_WANT_WRITE) {
+			Glib::IO->add_watch(
+				$fd, 'out', \&_geturl_write_request,
+				$_[0]
+			)
+		}
+		else {
+			$_[0][1]->();
+		}
+	}
+	else {
+		my ($sock, $cb) = splice @{$_[0]}, 0, 2;
+	
+		if ($sock->write_request(@{$_[0]})) {
+			Glib::IO->add_watch(
+				$fd, 'in', \&_geturl_read_response_headers,
+				[$sock, $cb]
+			);
+		}
+		else {
+			$cb->();
+		}
+	}
+	
+	return; # remove watcher
+}
+
+sub _geturl_read_response_headers
+{
+	my ($fd, $cond) = splice @_, 0, 2;
+	my ($sock, $cb) = @{$_[0]};
+	
+	eval {
+		$sock->read_response_headers()
+			or return 1; # no headers yet
+			             # continue watching
+		
+		my $page;
+		Glib::IO->add_watch(
+			$fd, 'in', \&_geturl_read_response_body,
+			[$sock, $cb, \$page]
+		);
+	};
+	if ($@) {
+		$cb->();
+	}
+	
+	return; # remove watcher
+}
+
+sub _geturl_read_response_body
+{
+	my ($fd, $cond) = splice @_, 0, 2;
+	my ($sock, $cb, $page) = @{$_[0]};
+	
+	eval {
+		my $n = $sock->read_entity_body(my $buf, 1024)
+			or die 'No data received';
+	
+		substr($$page, length $$page) = $buf
+			unless $n == -1;
+	};
+	if ($@) {
+		$cb->($$page);
+		return;
+	}
+	
+	1;
 }
 
 1;
@@ -120,20 +224,30 @@ __END__
 
 =head1 NAME
 
-WWW::AOstat - Implementation of the stat.academ.org API
+WWW::AOstat::NB::Glib - Non-blocking Implementation of the stat.academ.org API based on Glib
 
 =head1 SYNOPSIS
 
- use WWW::AOstat;
- 
- my $stat = WWW::AOstat->new('login', 'password', timeout=>10);
- 
- $stat->turn(1);
- my ($traff, $money, $status, $cred_sum, $cred_time) = $stat->stat();
+	$ao->login('root', '******',
+		sub { 
+			if ($_[0]) {
+				say 'Login ok';
+				$ao->stat(
+					sub {
+						require Data::Dumper;
+						say Data::Dumper::Dumper(@_)
+					}
+				)
+			}
+			else {
+				say 'Login failed';
+			}
+		}
+	);
 
 =head1 DESCRIPTION
 
-The C<WWW::AOstat> is a class implementing stat.academ.org API (only useful parts of the API).
+The C<WWW::AOstat::NB::Glib> is a class implementing stat.academ.org API (only useful parts of the API).
 With this module you can login to stat.academ.org, turn on/off internet, get actual balance and online status.
 Also you can get amount of the credit (if you use it) and number of days remains.
 
@@ -141,85 +255,31 @@ Also you can get amount of the credit (if you use it) and number of days remains
 
 =over
 
-=item WWW::AOstat->new($login, $password, %lwp_opts)
+=item WWW::AOstat->new()
 
-Constructs new C<WWW::AOstat> object. $login and $password are login and password from stat.academ.org. Also you
-can pass options pairs as argument. This options would pass to LWP::UserAgent constructor.
+Constructs new C<WWW::AOstat::NB::Glib> object.
 
-Example:
+=item $stat->login($login, $password, $cb)
 
-	$stat = WWW::AOstat->new('user_login', 'user_password', timeout=>10, agent=>'Mozilla 5.0');
+Trying to login to stat.academ.org with given login and password
 
-=item $stat->try_login($login, $password)
+=item $stat->stat($cb)
 
-Trying to login to stat.academ.org with given login and password or with login from constructor if $login is undef
-and password from constructor if $password is undef. On success return user id and false on failure.
+Trying to get user statistic.
 
-Example:
-
-	my $uid = $stat->try_login('qwerty', '1234') or die('Login failed');
-
-=item $stat->stat()
-
-Trying to get user statistic. Return list of the traffic (mb) remained, money (rub) remained, online
-status, credit amount (rub) and days remains ( If credit not used this will be (0,0) ) on success.
-On failure return empty list, which means false in the list context.
-
-Example:
-
-	if(my ($traff, $money, $status, $cred_sum, $cred_time) = $stat->stat)
-	{
-		print "Statistic: traffic - $traff, money - $money, status - "
-		      .($status == 1 ? "online" : $status == 0 ? "offline" : "inaccessible").
-		      .($cred_sum ? "credit - $cred_sum rub, $cred_time days" : "credit not used");
-	}
-	else
-	{
-		die("Failed to get stat");
-	}
-
-=item $stat->turn($act)
+=item $stat->turn($act, $cb)
 
 Trying to turn on the internet if argument is true and turn off if argument is false.
-Return true on success and false on failure.
 
-=item $stat->geturl($url, $login, $password)
+=item $stat->geturl($url, $cb)
 
-For private usage. But you can use it to get some external page which is not
-implemented by this module. It use GET method with Basic authorization which
-use your current login and password or $login and $password if given.
-
-Example:
-
-	my $page = $stat->geturl('http://google.ru', 'anonym', 'anonym');
-
-=item $stat->login
-
-=item $stat->login($login)
-
-Get or set current user login
-
-=item $stat->password
-
-=item $stat->password($password)
-
-Get or set current user password
-
-=item $stat->uid
-
-=item $stat->uid($uid)
-
-Get or set current user id
+For private usage. But you can use it to get some external page.
 
 =back
 
-=head1 SEE ALSO
-
-L<LWP::UserAgent>
-
 =head1 COPYRIGHT
 
-Copyright 2009 Oleg G <verdrehung@gmail.com>.
+Copyright 2011 Oleg G <verdrehung@gmail.com>.
 
 This library is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself.
