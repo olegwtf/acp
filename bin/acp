@@ -37,6 +37,9 @@ $config{password} = $config{password} ? xcrypt($config{password}, $user) : $conf
 
 $SIG{HUP} = $SIG{TERM} = $SIG{INT} = \&on_quit;
 
+my $ao = WWW::AOstat::NB::Glib->new();
+$ao->login($config{login}, $config{password}, sub {});
+
 my $glade  = Gtk2::GladeXML->new(GLADE);
 $glade->signal_autoconnect_from_package('main');
 
@@ -44,6 +47,8 @@ my $online = -1;
 my $click  =  0;
 my $upd    =  0;
 
+# GUI DECLARATION
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 my $window = $glade->get_widget('window1');
 $window->set_icon_from_file(ICON_MAIN);
 
@@ -118,125 +123,35 @@ $menu->append($menu_opt);
 
 my $notify = Gtk2::Notify->new('Academ.org Control Panel');
 $notify->set_timeout(10000);
-Glib::Timeout->add($config{int_update}*1000*60*60, \&on_checkupd); #timeout in hours to check updates
-Glib::Timeout->add(10*1000, sub{ on_checkupd(); return 0 });
-Glib::Timeout->add(1*1000,  sub{ notify("Задайте логин и пароль от страницы статистики") unless $config{login} && $config{password}; return 0 });
+
 Gtk2::AboutDialog->set_url_hook(sub{});
+
+# TIMERS DECLARATION
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Glib::Timeout->add($config{int_update}*1000*60*60, \&on_checkupd);
+Glib::Timeout->add(10*1000, sub{ on_checkupd(); ao_stat_get(); return 0 });
+Glib::Timeout->add(1*1000,  sub{ notify("Задайте логин и пароль от страницы статистики") unless $config{login} && $config{password}; return 0 });
 
 Gtk2->main;
 
-
-#SIGNAL HANDLERS
-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# sub sig_usr1
-# {
-# 	chomp(my $msg = <READER_PARENT>);
-# 
-# 	if($msg == MSG_CHECK_LP)
-# 	{
-# 		chomp(my $rcode = <READER_PARENT>);
-# 		$s1_btn->set_sensitive(1);
-# 		$s2_btn->set_sensitive(1);
-# 		unless($rcode)
-# 		{
-# 			say_msg("Неверный логин или пароль\nНастройки не сохранены", 'error');
-# 		}
-# 		else
-# 		{
-# 			if(save_settings())
-# 			{
-# 				do "$acp_path/acp.conf";
-# 				$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
-# 				syswrite WRITER_PARENT, MSG_RELOAD_CONF."\n";
-# 				kill 'USR1', $child;
-# 				say_msg("Настройки сохранены", 'info');
-# 			}
-# 		}
-# 	}
-# 	elsif($msg == MSG_GET_BAL)
-# 	{
-# 		
-# 		chomp(my $stat = <READER_PARENT>);
-# 		my ($traff, $money, $status, $cred_sum, $cred_time) = split '\|', $stat;
-# 		my $bal = ($money||0)." руб / ".($traff||0)." мб";
-# 		$online = $status;
-# 
-# 		my ($icon, $msg) = tell_status($status);
-# 		put_file("$acp_path/acp.log", "[".date()."]\t".sprintf('%-20s', $bal)."\t$msg\n", '>>')
-# 		or say_msg("Ошибка записи в файл `$acp_path/acp.log'", 'error') if $config{do_log};
-# 		
-# 		$tray_icon->set_tooltip("Баланс: $bal".($cred_sum ? "\nКредит: $cred_sum руб ($cred_time дн)" : ""));
-# 		$tray_icon->set_from_file($icon);
-# 		
-# 		if($config{cred_notify} && $cred_time && ($cred_time < $config{cred_notify_val} || on_holiday($cred_time)) && !$upd && $online!=-1)
-# 		{
-# 			$upd++;
-# 			notify("Обещанный платеж истекает через $cred_time дн.\nНе забудьте пополнить баланс");
-# 		}
-# 		elsif($config{bal_notify} && (split(/\s/, $bal))[0] < $config{bal_notify_val} && !$upd && $online!=-1)
-# 		{
-# 			$upd++;
-# 			notify("На вашем счете осталось $bal\nНе забудьте пополнить баланс");
-# 		}
-# 		elsif($upd)
-# 		{
-# 			$upd++;
-# 		}
-# 		
-# 		$upd = 0 if $upd > $config{period_notify}-1;
-# 	}
-# 	elsif($msg == MSG_CHECK_UPD)
-# 	{
-# 		$tray_icon->set_from_file((tell_status($online))[0]);
-# 
-# 		chomp (my $msg = <READER_PARENT>);
-# 		if($msg)
-# 		{
-# 			utf8::decode($msg);
-# 			put_file("$acp_path/acp.log", "[".date()."]\t$msg\n", '>>') if $config{do_log};
-# 			notify($msg);
-# 		}
-# 	}
-# 	elsif($msg == MSG_CHILD_READY)
-# 	{
-# 		if($PARENT_READY)
-# 		{
-# 			if($config{inet_enable})
-# 			{
-# 				syswrite WRITER_PARENT, MSG_TURN_ON."\n";
-# 				kill 'USR1', $child;
-# 			}
-# 			else
-# 			{
-# 				kill 'ALRM', $child;
-# 			}
-# 		}
-# 		else
-# 		{
-# 			syswrite WRITER_PARENT, MSG_PARENT_NOT_READY."\n";
-# 			kill 'USR1', $child;
-# 		}
-# 	}
-# }
-
-#USER HANDLERS
+# USER ACTIONS
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 sub on_delete
 {
 	$window->hide;
-	return 1;
+	1;
 }
 
 sub on_about
 {
+	local $/ = undef;
 	Gtk2->show_about_dialog
 	(
 		$window,
 		program_name => 'ACP',
 		version      => ACP_VERSION,
 		comments     => "ACP - Academ.org Control Panel для Linux",
-		license      => join('', <DATA>),
+		license      => <DATA>,
 		authors      => 'Олег Г. <verdrehung@gmail.com>',
 		icon         => $window->get_icon,
 		artists      => ['Алексей Б. <kilex@xmpp.ru>', 'Алексей В. <forlexan@gmail.com>', 'Олег Г. <verdrehung@gmail.com>'],
@@ -251,16 +166,34 @@ sub on_show
 
 sub on_quit
 {
-# 	kill 'TERM', $child;
 	Gtk2->main_quit;
 }
 
 sub on_save
 {
-# 	$s1_btn->set_sensitive(0);
-# 	$s2_btn->set_sensitive(0);
-# 	syswrite WRITER_PARENT, MSG_CHECK_LP."\n".$l_entry->get_text."\n".$p_entry->get_text."\n";
-# 	kill 'USR1', $child;
+	$s1_btn->set_sensitive(0);
+	$s2_btn->set_sensitive(0);
+	$ao->login(
+		$l_entry->get_text, $p_entry->get_text,
+		sub {
+			if (@_) {
+				if(save_settings()) {
+					do "$acp_path/acp.conf";
+					$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
+					say_msg("Настройки сохранены", 'info');
+				}
+				else {
+					say_msg("Ошибка сохранения настроек", 'error');
+				}
+			}
+			else {
+				say_msg("Неверный логин или пароль\nНастройки не сохранены", 'error');
+			}
+			
+			$s1_btn->set_sensitive(1);
+			$s2_btn->set_sensitive(1);
+		}
+	);
 }
 
 sub on_popup
@@ -275,13 +208,15 @@ sub on_showlog
 	$window->set_default_size(450, 400);
 	$window->set_title("ACP: просмотр лога");
 	$window->set_position("center");
+	
 	my $scrolled = Gtk2::ScrolledWindow->new;
 	$window->add($scrolled);
+	
 	my $buffer = Gtk2::TextBuffer->new;
 	my $log = get_file("$acp_path/acp.log");
-	utf8::decode($log);
 	$buffer->set_text($log);
 	my $textview = Gtk2::TextView->new_with_buffer($buffer);
+	
 	$scrolled->add($textview);
 	$window->show_all;
 }
@@ -291,10 +226,17 @@ sub on_click
 	$click++;
 	if($click == 2)
 	{
-# 		$click = 0;
-# 		$tray_icon->set_from_file(ICON_WAIT);
-# 		syswrite WRITER_PARENT, ($online ? MSG_TURN_OFF : MSG_TURN_ON)."\n";
-# 		kill 'USR1', $child;
+		$click = 0;
+		$tray_icon->set_from_file(ICON_WAIT);
+		$ao->turn(
+			!$online,
+			sub {
+				if ($_[0]) {
+					$online = !$online;
+					$tray_icon->set_from_file((tell_status($online))[0]);
+				}
+			}
+		)
 	}
 	else
 	{
@@ -304,19 +246,61 @@ sub on_click
 
 sub on_checkupd
 {
-# 	my $user_act = $_[1]+0;
-# 	my $acp = $config{acp_update}||$user_act;
-# 	if($acp)
-# 	{
-# 		$tray_icon->set_from_file(ICON_WAIT);
-# 		syswrite WRITER_PARENT, MSG_CHECK_UPD."\n$acp$user_act\n"; # will show message that there are no updates if there are no updates and $user_act
-# 		kill 'USR1', $child;
-# 	}
-# 	return 1;
+	my $useract = shift;
+	$ao->geturl(
+		ACP_SERVER . '?cat=last',
+		sub {
+			my ($acp_v, undef) = split /__/, $_[0];
+	
+			if ($acp_v && $acp_v =~ /^[\d.]+$/ && $acp_v > ACP_VERSION) {
+				notify("Доступна для скачивания ACP версии $acp_v");
+			}
+			elsif ($useract) {
+				notify('Вы используете последнюю версию программы');
+			}
+			
+			$tray_icon->set_from_file((tell_status($online))[0]);
+		}
+	);
+	
+	1;
 }
 
+sub ao_stat_get
+{
+	$ao->stat(
+		sub {
+			my ($traff, $money, $status, $cred_sum, $cred_time) = @_;
+			$online = $status;
 
-#FUNCTIONAL
+			my ($icon, $msg) = tell_status($status);
+			#put_file("$acp_path/acp.log", "[".date()."]\t".sprintf('%-20s', $bal)."\t$msg\n", '>>')
+			#or say_msg("Ошибка записи в файл `$acp_path/acp.log'", 'error') if $config{do_log};
+			
+			$tray_icon->set_tooltip("Баланс: $money".($cred_sum ? "\nКредит: $cred_sum руб ($cred_time дн)" : ""));
+			$tray_icon->set_from_file($icon);
+			
+			if($config{cred_notify} && $cred_time && ($cred_time < $config{cred_notify_val} || on_holiday($cred_time)) && !$upd && $online!=-1)
+			{
+				$upd++;
+				notify("Обещанный платеж истекает через $cred_time дн.\nНе забудьте пополнить баланс");
+			}
+			elsif($config{bal_notify} && (split(/\s/, $money))[0] < $config{bal_notify_val} && !$upd && $online!=-1)
+			{
+				$upd++;
+				notify("На вашем счете осталось $money\nНе забудьте пополнить баланс");
+			}
+			elsif($upd)
+			{
+				$upd++;
+			}
+			
+			$upd = 0 if $upd > $config{period_notify}-1;
+		}
+	);
+}
+
+# HELP FUNCTIONS
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 sub single_click
 {
@@ -324,8 +308,9 @@ sub single_click
 	{
 		$click = 0;
 		$tray_icon->set_from_file(ICON_WAIT);
-# 		kill 'ALRM', $child;
+		ao_stat_get();
 	}
+	
 	return 0;
 }
 
@@ -334,7 +319,7 @@ sub put_file
 	my ($file, $data, $mode) = @_;
 	
 	utf8::encode($data);
-	open my $fh, $mode||'>', "$file" or return 0;
+	open my $fh, $mode||'>', "$file" or return;
 	print $fh $data;
 	close $fh;
 }
@@ -342,9 +327,9 @@ sub put_file
 sub get_file
 {
 	my $file = shift;
-	open my $fh, $file or return '';
-	my $content;
-	$content .= $_ while <$fh>;
+	open my $fh, '<:utf8', $file or return;
+	local $/ = undef;
+	my $content = <$fh>;
 	close $fh;
 	
 	return $content;
