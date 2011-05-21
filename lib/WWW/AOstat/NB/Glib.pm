@@ -19,7 +19,7 @@ use constant {
 
 sub new
 {
-	my ($class) = @_;
+	my ($class, $timeout) = @_;
 	
 	my $self = {
 			login    => '',
@@ -27,6 +27,7 @@ sub new
 			uid      => '',
 			page     => '',
 			update   => 0,
+			timeout  => $timeout || 30,
 	};
 		
 	bless $self, $class;
@@ -121,10 +122,16 @@ sub geturl
 		my $class = $uri->scheme eq 'http' ? 'Net::HTTP::NB' : 'Net::HTTPS::NB';
 		my $sock = $class->new(Host => $uri->host, PeerPort => $uri->port, Blocking => 0); # FIXME make non-blocking host resolving with Net::DNS
 		
-		Glib::IO->add_watch(
+		my $watcher;
+		my $timer = Glib::Timeout->add(
+			$self->{timeout}*1000, \&_geturl_timeout,
+			[ $cb, \$watcher ]
+		);
+		
+		$watcher = Glib::IO->add_watch(
 			fileno($sock), 'out', \&_geturl_write_request,
 			[
-				$sock, $cb,
+				$sock, $cb, $timer, \$watcher,
 				GET => $uri->path_query,
 				$uri->host eq API_HOST ?
 					(Authorization => "Basic " . encode_base64($self->{login} . ':' . $self->{password}))
@@ -137,37 +144,50 @@ sub geturl
 	return 1;
 }
 
+sub _geturl_timeout
+{
+	my ($cb, $watcher) = @{$_[0]};
+	
+	Glib::Source->remove($$watcher);
+	$cb->();
+	
+	0;
+}
+
 sub _geturl_write_request
 {
 	my ($fd, $cond) = splice @_, 0, 2;
+	my ($sock, $cb, $timer, $watcher) = splice @{$_[0]}, 0, 4;
 	
-	if ($_[0][0]->isa('Net::HTTPS::NB') && !$_[0][0]->connected) {
+	if ($sock->isa('Net::HTTPS::NB') && !$sock->connected) {
+		unshift @{$_[0]}, $sock, $cb, $timer, $watcher;
+		
 		if ($HTTPS_ERROR == HTTPS_WANT_READ) {
-			Glib::IO->add_watch(
+			$$watcher = Glib::IO->add_watch(
 				$fd, 'in', \&_geturl_write_request,
 				$_[0]
 			)
 		}
 		elsif ($HTTPS_ERROR == HTTPS_WANT_WRITE) {
-			Glib::IO->add_watch(
+			$$watcher = Glib::IO->add_watch(
 				$fd, 'out', \&_geturl_write_request,
 				$_[0]
 			)
 		}
 		else {
+			Glib::Source->remove($timer);
 			$_[0][1]->();
 		}
 	}
 	else {
-		my ($sock, $cb) = splice @{$_[0]}, 0, 2;
-	
 		if ($sock->write_request(@{$_[0]})) {
-			Glib::IO->add_watch(
+			$$watcher = Glib::IO->add_watch(
 				$fd, 'in', \&_geturl_read_response_headers,
-				[$sock, $cb]
+				[$sock, $cb, $timer, $watcher]
 			);
 		}
 		else {
+			Glib::Source->remove($timer);
 			$cb->();
 		}
 	}
@@ -178,7 +198,7 @@ sub _geturl_write_request
 sub _geturl_read_response_headers
 {
 	my ($fd, $cond) = splice @_, 0, 2;
-	my ($sock, $cb) = @{$_[0]};
+	my ($sock, $cb, $timer, $watcher) = @{$_[0]};
 	
 	eval {
 		$sock->read_response_headers()
@@ -186,12 +206,13 @@ sub _geturl_read_response_headers
 			             # continue watching
 		
 		my $page;
-		Glib::IO->add_watch(
+		$$watcher = Glib::IO->add_watch(
 			$fd, 'in', \&_geturl_read_response_body,
-			[$sock, $cb, \$page]
+			[$sock, $cb, $timer, \$page]
 		);
 	};
 	if ($@) {
+		Glib::Source->remove($timer);
 		$cb->();
 	}
 	
@@ -201,7 +222,7 @@ sub _geturl_read_response_headers
 sub _geturl_read_response_body
 {
 	my ($fd, $cond) = splice @_, 0, 2;
-	my ($sock, $cb, $page) = @{$_[0]};
+	my ($sock, $cb, $timer, $page) = @{$_[0]};
 	
 	eval {
 		my $n = $sock->read_entity_body(my $buf, 1024)
@@ -211,6 +232,7 @@ sub _geturl_read_response_body
 			unless $n == -1;
 	};
 	if ($@) {
+		Glib::Source->remove($timer);
 		$cb->($$page);
 		return;
 	}
@@ -255,7 +277,7 @@ Also you can get amount of the credit (if you use it) and number of days remains
 
 =over
 
-=item WWW::AOstat->new()
+=item WWW::AOstat->new($timeout||30)
 
 Constructs new C<WWW::AOstat::NB::Glib> object.
 
