@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 die()
 {
@@ -6,18 +6,19 @@ die()
 	exit 1;
 }
 
-[ -e 'acp' ] || die "file ./acp doesn't exists";
+ACP=bin/acp
+[ -e $ACP ] || die "file $ACP doesn't exists";
 
-if grep /usr/share/apps/acp/ acp >/dev/null
+if grep /usr/share/apps/acp/ $ACP >/dev/null
 then
-	sed -i 's@/usr/share/apps/acp/@share/@; s@#!/usr/bin/perl@#!/usr/bin/perl -I lib@' acp
+	sed -i 's@/usr/share/apps/acp/@share/@; s@#!/usr/bin/perl@#!/usr/bin/perl -I lib@' $ACP
 	echo '/usr/share/apps/acp/ --> share/'
-elif grep share/ acp >/dev/null
+elif grep share/ $ACP >/dev/null
 then
-	sed -i 's@share/@/usr/share/apps/acp/@; s@#!/usr/bin/perl -I lib@#!/usr/bin/perl@' acp
+	sed -i 's@share/@/usr/share/apps/acp/@; s@#!/usr/bin/perl -I lib@#!/usr/bin/perl@' $ACP
 	echo 'share/ --> /usr/share/apps/acp/'
 else
-	die "can't reconfigure acp"
+	die "can't reconfigure $ACP"
 fi
 
 echo "done";

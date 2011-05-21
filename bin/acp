@@ -2,18 +2,13 @@
 
 use strict;
 use utf8;
-use POSIX 'WNOHANG';
+use Gtk2 -init;
+use Gtk2::Notify -init, 'XY';
+use Gtk2::GladeXML; # TODO: move to gtk builder
+use WWW::AOstat::NB::Glib;
 
 use constant
 {
-	MSG_CHECK_LP         => 0,
-	MSG_GET_BAL          => 1,
-	MSG_TURN_ON          => 2,
-	MSG_TURN_OFF         => 3,
-	MSG_RELOAD_CONF      => 4,
-	MSG_CHECK_UPD        => 5,
-	MSG_CHILD_READY      => 6,
-	MSG_PARENT_NOT_READY => 7,
 	GLADE                => '/usr/share/apps/acp/acp.glade',
 	ICON_WAIT            => '/usr/share/apps/acp/acp_wait.png',
 	ICON_GREEN           => '/usr/share/apps/acp/acp_green.png',
@@ -21,16 +16,13 @@ use constant
 	ICON_GRAY            => '/usr/share/apps/acp/acp_gray.png',
 	ICON_MAIN            => '/usr/share/apps/acp/acp_main.ico',
 	CONFIG               => '/usr/share/apps/acp/acp.conf',
-	ACP_VERSION          => 0.284,
-	ACP_REVISION         => 0,
+	ACP_VERSION          => 0.300,
 	ACP_SERVER           => 'http://prozer.at.nsu.ru/acp/get.php'
 };
 
 my $acp_path = "$ENV{HOME}/.acp";
 my $user     =  $ENV{USER};
 
-#ignore signals until fork success
-$SIG{ALRM} = $SIG{USR1} = 'IGNORE';
 
 #checking configuration in ~/
 mkdir $acp_path                                      or die "Can't create dir $acp_path"            unless -d  $acp_path;
@@ -42,135 +34,8 @@ require "$acp_path/acp.conf";
 our %config;
 $config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
 
-#forking and open pipes to talk parent with child
-pipe(READER_PARENT, WRITER_CHILD);
-pipe(READER_CHILD, WRITER_PARENT);
-die "Can't fork" unless defined (my $child = fork);
-
-unless($child)
-{
-	#this is child process: background worker
-	require WWW::AOstat;
-	
-	my $ao = WWW::AOstat->new($config{login}, $config{password}, timeout=>10);
-	my $parent = getppid;
-	
-	#close unused pipe link
-	close WRITER_PARENT;
-	close READER_PARENT;
-	
-	$SIG{USR1} = sub
-	{
-		chomp(my $msg = <READER_CHILD>);
-		if($msg == MSG_CHECK_LP)
-		{	#check login and password
-			chomp(my $login = <READER_CHILD>);
-			chomp(my $passw = <READER_CHILD>);
-			
-			my $uid = $ao->try_login($login, $passw);
-			if($uid)
-			{
-				$ao->login($login);
-				$ao->password($passw);
-				$ao->uid($uid);
-			}
-			
-			syswrite WRITER_CHILD, MSG_CHECK_LP."\n$uid\n";
-			kill 'USR1', $parent;
-		}
-		elsif($msg == MSG_GET_BAL)
-		{	#check balance: redirect to ALRM handler
-			kill 'ALRM', $$;
-		}
-		elsif($msg == MSG_TURN_ON)
-		{	#turn on internet and update balance information
-			$ao->turn(1);
-			kill 'ALRM', $$;
-		}
-		elsif($msg == MSG_TURN_OFF)
-		{	#turn off internet and update balance information
-			$ao->turn(0);
-			kill 'ALRM', $$;
-		}
-		elsif($msg == MSG_RELOAD_CONF)
-		{	#reload configuration and update balance information
-			do "$acp_path/acp.conf";
-			$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
-			$ao->login($config{login});
-			$ao->password($config{password});
-			kill 'ALRM', $$;
-		}
-		elsif($msg == MSG_CHECK_UPD)
-		{	#check for updates
-			chomp(my $what = <READER_CHILD>);
-			$msg = '';
-			my ($acp, $user_act) = split '', $what;
-
-			my ($acp_v, undef) = split(/__/, $ao->geturl(ACP_SERVER.'?cat=last', '*', '*'));
-	
-			if($acp && $acp_v =~ /^[\d.]+$/ && $acp_v > ACP_VERSION)
-			{
-				$msg = "Доступна для скачивания ACP версии $acp_v";
-			}
-			elsif($user_act)
-			{ #no updates, notify user
-				$msg = "Вы используете самую последнюю версию программы: " . ACP_VERSION;
-			}
-			
-			utf8::encode($msg);
-
-			syswrite WRITER_CHILD, MSG_CHECK_UPD."\n$msg\n";
-			kill 'USR1', $parent;
-		}
-		elsif($msg == MSG_PARENT_NOT_READY)
-		{ #parent not initialized yet: sleep for 0.25 sec and try again
-			select undef, undef, undef, 0.25;
-			
-			syswrite WRITER_CHILD, MSG_CHILD_READY."\n";
-			kill 'USR1', $parent;
-		}
-	};
-	
-	$SIG{ALRM} = sub
-	{	#get statistics: balance, etc
-		my ($traff, $money, $status, $cred_sum, $cred_time) = $ao->stat();
-		$status = -1 unless defined $status;
-		
-		syswrite WRITER_CHILD, MSG_GET_BAL."\n$traff|$money|$status|$cred_sum|$cred_time\n";
-		kill 'USR1', $parent;
-		alarm $config{stat_refresh}*60;
-	};
-	
-	$SIG{INT} = $SIG{HUP} = $SIG{TERM} = sub
-	{	#quitting
-		$ao->turn(0) if $config{inet_disable};
-		exit;
-	};
-	
-	#notify parent that child is ready to work
-	syswrite WRITER_CHILD, MSG_CHILD_READY."\n";
-	kill 'USR1', $parent;
-
-	#wait until signal received
-	sleep while 1;
-}
-
-
-#this is parent process: GUI
-my $PARENT_READY = 0;
-
-close READER_CHILD;
-close WRITER_CHILD;
-$SIG{CHLD} = \&sig_chld;
-$SIG{USR1} = \&sig_usr1;
 
 $SIG{HUP} = $SIG{TERM} = $SIG{INT} = \&on_quit;
-
-require Gtk2::Notify;
-require Gtk2::GladeXML; # TODO: move to gtk builder
-
-Gtk2->init;
-Gtk2::Notify->init('XY');
 
 my $glade  = Gtk2::GladeXML->new(GLADE);
 $glade->signal_autoconnect_from_package('main');
@@ -258,108 +123,102 @@ Glib::Timeout->add(10*1000, sub{ on_checkupd(); return 0 });
 Glib::Timeout->add(1*1000,  sub{ notify("Задайте логин и пароль от страницы статистики") unless $config{login} && $config{password}; return 0 });
 Gtk2::AboutDialog->set_url_hook(sub{});
 
-$PARENT_READY = 1;
-
 Gtk2->main;
 
 
 #SIGNAL HANDLERS
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-sub sig_chld
-{
-	warn 'Background worker died' if $child && waitpid($child, WNOHANG) == $child;
-}
 
-sub sig_usr1
-{
-	chomp(my $msg = <READER_PARENT>);
-
-	if($msg == MSG_CHECK_LP)
-	{
-		chomp(my $rcode = <READER_PARENT>);
-		$s1_btn->set_sensitive(1);
-		$s2_btn->set_sensitive(1);
-		unless($rcode)
-		{
-			say_msg("Неверный логин или пароль\nНастройки не сохранены", 'error');
-		}
-		else
-		{
-			if(save_settings())
-			{
-				do "$acp_path/acp.conf";
-				$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
-				syswrite WRITER_PARENT, MSG_RELOAD_CONF."\n";
-				kill 'USR1', $child;
-				say_msg("Настройки сохранены", 'info');
-			}
-		}
-	}
-	elsif($msg == MSG_GET_BAL)
-	{
-		
-		chomp(my $stat = <READER_PARENT>);
-		my ($traff, $money, $status, $cred_sum, $cred_time) = split '\|', $stat;
-		my $bal = ($money||0)." руб / ".($traff||0)." мб";
-		$online = $status;
-
-		my ($icon, $msg) = tell_status($status);
-		put_file("$acp_path/acp.log", "[".date()."]\t".sprintf('%-20s', $bal)."\t$msg\n", '>>')
-		or say_msg("Ошибка записи в файл `$acp_path/acp.log'", 'error') if $config{do_log};
-		
-		$tray_icon->set_tooltip("Баланс: $bal".($cred_sum ? "\nКредит: $cred_sum руб ($cred_time дн)" : ""));
-		$tray_icon->set_from_file($icon);
-		
-		if($config{cred_notify} && $cred_time && ($cred_time < $config{cred_notify_val} || on_holiday($cred_time)) && !$upd && $online!=-1)
-		{
-			$upd++;
-			notify("Обещанный платеж истекает через $cred_time дн.\nНе забудьте пополнить баланс");
-		}
-		elsif($config{bal_notify} && (split(/\s/, $bal))[0] < $config{bal_notify_val} && !$upd && $online!=-1)
-		{
-			$upd++;
-			notify("На вашем счете осталось $bal\nНе забудьте пополнить баланс");
-		}
-		elsif($upd)
-		{
-			$upd++;
-		}
-		
-		$upd = 0 if $upd > $config{period_notify}-1;
-	}
-	elsif($msg == MSG_CHECK_UPD)
-	{
-		$tray_icon->set_from_file((tell_status($online))[0]);
-
-		chomp (my $msg = <READER_PARENT>);
-		if($msg)
-		{
-			utf8::decode($msg);
-			put_file("$acp_path/acp.log", "[".date()."]\t$msg\n", '>>') if $config{do_log};
-			notify($msg);
-		}
-	}
-	elsif($msg == MSG_CHILD_READY)
-	{
-		if($PARENT_READY)
-		{
-			if($config{inet_enable})
-			{
-				syswrite WRITER_PARENT, MSG_TURN_ON."\n";
-				kill 'USR1', $child;
-			}
-			else
-			{
-				kill 'ALRM', $child;
-			}
-		}
-		else
-		{
-			syswrite WRITER_PARENT, MSG_PARENT_NOT_READY."\n";
-			kill 'USR1', $child;
-		}
-	}
-}
+# sub sig_usr1
+# {
+# 	chomp(my $msg = <READER_PARENT>);
+# 
+# 	if($msg == MSG_CHECK_LP)
+# 	{
+# 		chomp(my $rcode = <READER_PARENT>);
+# 		$s1_btn->set_sensitive(1);
+# 		$s2_btn->set_sensitive(1);
+# 		unless($rcode)
+# 		{
+# 			say_msg("Неверный логин или пароль\nНастройки не сохранены", 'error');
+# 		}
+# 		else
+# 		{
+# 			if(save_settings())
+# 			{
+# 				do "$acp_path/acp.conf";
+# 				$config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
+# 				syswrite WRITER_PARENT, MSG_RELOAD_CONF."\n";
+# 				kill 'USR1', $child;
+# 				say_msg("Настройки сохранены", 'info');
+# 			}
+# 		}
+# 	}
+# 	elsif($msg == MSG_GET_BAL)
+# 	{
+# 		
+# 		chomp(my $stat = <READER_PARENT>);
+# 		my ($traff, $money, $status, $cred_sum, $cred_time) = split '\|', $stat;
+# 		my $bal = ($money||0)." руб / ".($traff||0)." мб";
+# 		$online = $status;
+# 
+# 		my ($icon, $msg) = tell_status($status);
+# 		put_file("$acp_path/acp.log", "[".date()."]\t".sprintf('%-20s', $bal)."\t$msg\n", '>>')
+# 		or say_msg("Ошибка записи в файл `$acp_path/acp.log'", 'error') if $config{do_log};
+# 		
+# 		$tray_icon->set_tooltip("Баланс: $bal".($cred_sum ? "\nКредит: $cred_sum руб ($cred_time дн)" : ""));
+# 		$tray_icon->set_from_file($icon);
+# 		
+# 		if($config{cred_notify} && $cred_time && ($cred_time < $config{cred_notify_val} || on_holiday($cred_time)) && !$upd && $online!=-1)
+# 		{
+# 			$upd++;
+# 			notify("Обещанный платеж истекает через $cred_time дн.\nНе забудьте пополнить баланс");
+# 		}
+# 		elsif($config{bal_notify} && (split(/\s/, $bal))[0] < $config{bal_notify_val} && !$upd && $online!=-1)
+# 		{
+# 			$upd++;
+# 			notify("На вашем счете осталось $bal\nНе забудьте пополнить баланс");
+# 		}
+# 		elsif($upd)
+# 		{
+# 			$upd++;
+# 		}
+# 		
+# 		$upd = 0 if $upd > $config{period_notify}-1;
+# 	}
+# 	elsif($msg == MSG_CHECK_UPD)
+# 	{
+# 		$tray_icon->set_from_file((tell_status($online))[0]);
+# 
+# 		chomp (my $msg = <READER_PARENT>);
+# 		if($msg)
+# 		{
+# 			utf8::decode($msg);
+# 			put_file("$acp_path/acp.log", "[".date()."]\t$msg\n", '>>') if $config{do_log};
+# 			notify($msg);
+# 		}
+# 	}
+# 	elsif($msg == MSG_CHILD_READY)
+# 	{
+# 		if($PARENT_READY)
+# 		{
+# 			if($config{inet_enable})
+# 			{
+# 				syswrite WRITER_PARENT, MSG_TURN_ON."\n";
+# 				kill 'USR1', $child;
+# 			}
+# 			else
+# 			{
+# 				kill 'ALRM', $child;
+# 			}
+# 		}
+# 		else
+# 		{
+# 			syswrite WRITER_PARENT, MSG_PARENT_NOT_READY."\n";
+# 			kill 'USR1', $child;
+# 		}
+# 	}
+# }
 
 #USER HANDLERS
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -376,7 +235,7 @@ sub on_about
 		$window,
 		program_name => 'ACP',
 		version      => ACP_VERSION,
-		comments     => "(SVN r".ACP_REVISION.")\nACP - Academ.org Control Panel для Linux",
+		comments     => "ACP - Academ.org Control Panel для Linux",
 		license      => join('', <DATA>),
 		authors      => 'Олег Г. <verdrehung@gmail.com>',
 		icon         => $window->get_icon,
@@ -392,16 +251,16 @@ sub on_show
 
 sub on_quit
 {
-	kill 'TERM', $child;
+# 	kill 'TERM', $child;
 	Gtk2->main_quit;
 }
 
 sub on_save
 {
-	$s1_btn->set_sensitive(0);
-	$s2_btn->set_sensitive(0);
-	syswrite WRITER_PARENT, MSG_CHECK_LP."\n".$l_entry->get_text."\n".$p_entry->get_text."\n";
-	kill 'USR1', $child;
+# 	$s1_btn->set_sensitive(0);
+# 	$s2_btn->set_sensitive(0);
+# 	syswrite WRITER_PARENT, MSG_CHECK_LP."\n".$l_entry->get_text."\n".$p_entry->get_text."\n";
+# 	kill 'USR1', $child;
 }
 
 sub on_popup
@@ -432,10 +291,10 @@ sub on_click
 	$click++;
 	if($click == 2)
 	{
-		$click = 0;
-		$tray_icon->set_from_file(ICON_WAIT);
-		syswrite WRITER_PARENT, ($online ? MSG_TURN_OFF : MSG_TURN_ON)."\n";
-		kill 'USR1', $child;
+# 		$click = 0;
+# 		$tray_icon->set_from_file(ICON_WAIT);
+# 		syswrite WRITER_PARENT, ($online ? MSG_TURN_OFF : MSG_TURN_ON)."\n";
+# 		kill 'USR1', $child;
 	}
 	else
 	{
@@ -445,15 +304,15 @@ sub on_click
 
 sub on_checkupd
 {
-	my $user_act = $_[1]+0;
-	my $acp = $config{acp_update}||$user_act;
-	if($acp)
-	{
-		$tray_icon->set_from_file(ICON_WAIT);
-		syswrite WRITER_PARENT, MSG_CHECK_UPD."\n$acp$user_act\n"; # will show message that there are no updates if there are no updates and $user_act
-		kill 'USR1', $child;
-	}
-	return 1;
+# 	my $user_act = $_[1]+0;
+# 	my $acp = $config{acp_update}||$user_act;
+# 	if($acp)
+# 	{
+# 		$tray_icon->set_from_file(ICON_WAIT);
+# 		syswrite WRITER_PARENT, MSG_CHECK_UPD."\n$acp$user_act\n"; # will show message that there are no updates if there are no updates and $user_act
+# 		kill 'USR1', $child;
+# 	}
+# 	return 1;
 }
 
 
@@ -465,7 +324,7 @@ sub single_click
 	{
 		$click = 0;
 		$tray_icon->set_from_file(ICON_WAIT);
-		kill 'ALRM', $child;
+# 		kill 'ALRM', $child;
 	}
 	return 0;
 }

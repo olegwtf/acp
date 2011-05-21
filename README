@@ -1,4 +1,8 @@
-Для запуска из текущей директории необходимо предварительно запустить скрипт reconf, который поменяет все пути к файлам на относительные.
-Для обратной замены запустите reconf повторно.
+ACP - Academ.org control panel for Linux and BSD systems
+Helps users of Academ.Org network to watch their traffic and money usage, to turn on/off internet, etc.
+This program uses stat.academ.org API
+------
+To start ACP without installing run reconf script. This will change all pathes in bin/acp to relative. Then command to start will: bin/acp 
+To revert run reconf again
 
-Для сборки deb пакета запустите скрипт build_deb
+To build deb package for debian/ubuntu run build_deb script

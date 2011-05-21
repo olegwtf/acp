@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 echo 'copying to tmp..'
 tmp=/tmp/acp_`date +%s%N`
@@ -6,7 +6,7 @@ mkdir $tmp || exit
 mkdir $tmp/DEBIAN || exit
 
 mkdir -p $tmp/usr/bin || exit
-cp acp $tmp/usr/bin || exit
+cp bin/acp $tmp/usr/bin || exit
 
 mkdir -p $tmp/usr/share/apps/acp || exit
 cp share/* $tmp/usr/share/apps/acp || exit
