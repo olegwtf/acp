@@ -12,14 +12,17 @@ mkdir -p $tmp/usr/share/apps/acp || exit
 cp share/* $tmp/usr/share/apps/acp || exit
 
 mkdir -p $tmp/usr/share/perl5/WWW || exit
-cp lib/WWW/* $tmp/usr/share/perl5/WWW || exit
+cp -R lib/WWW/* $tmp/usr/share/perl5/WWW || exit
+
+if [ "$1" != "--no-net-https-nb" ]
+then
+	mkdir -p $tmp/usr/share/perl5/Net/HTTPS || exit
+	wget -O- http://search.cpan.org/CPAN/authors/id/O/OL/OLEG/Net-HTTPS-NB-0.1.tar.gz |
+		tar -Oxvzf - Net-HTTPS-NB-0.1/lib/Net/HTTPS/NB.pm > $tmp/usr/share/perl5/Net/HTTPS/NB.pm || exit
+fi
 
 size=`du -ks $tmp/usr/ | cut -f1`
-version=`egrep -o 'ACP_VERSION[[:space:]]+=>[[:space:]]+[[:digit:].]+' acp | egrep -o '[[:digit:].]+'`
-revision=`find . -type d -name .svn -exec egrep -A 1 '[[:digit:]]{4}-[[:digit:]]{2}-[[:digit:]]{2}' '{}/entries' \; | egrep '^[0-9]+$' | sort -g | tail -n 1`
-
-# set revision
-sed -i -r "s/(ACP_REVISION[[:space:]]*=>[[:space:]]*)[[:digit:]]+/\1$revision/" $tmp/usr/bin/acp
+version=`egrep -o 'ACP_VERSION[[:space:]]+=>[[:space:]]+[[:digit:].]+' bin/acp | egrep -o '[[:digit:].]+'`
 
 echo \
 "Package: acp
@@ -27,7 +30,7 @@ Version: $version
 Architecture: all
 Maintainer: Oleg G <verdrehung@gmail.com>
 Installed-Size: $size
-Depends: libgtk2-perl, libgtk2-notify-perl, libgtk2-gladexml-perl, libcrypt-ssleay-perl, libwww-perl, perl
+Depends: perl, libgtk2-perl, libgtk2-notify-perl, libgtk2-gladexml-perl, libio-socket-ssl-perl, liburi-perl, libnet-http-perl | libwww-perl
 Section: perl
 Priority: optional
 Description: ACP - Academ.org Control Panel for Linux

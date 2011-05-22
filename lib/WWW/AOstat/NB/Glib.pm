@@ -139,9 +139,9 @@ sub geturl
 					()
 			]
 		);
-	} or return;
+	} or $cb->();
 	
-	return 1;
+	1;
 }
 
 sub _geturl_timeout
