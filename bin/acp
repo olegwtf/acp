@@ -20,9 +20,10 @@ use constant
 	ACP_SERVER           => 'http://prozer.at.nsu.ru/acp/get.php'
 };
 
+$SIG{HUP} = $SIG{TERM} = $SIG{INT} = \&on_quit;
+
 my $acp_path = "$ENV{HOME}/.acp";
 my $user     =  $ENV{USER};
-
 
 #checking configuration in ~/
 mkdir $acp_path                                      or die "Can't create dir $acp_path"            unless -d  $acp_path;
@@ -34,21 +35,15 @@ require "$acp_path/acp.conf";
 our %config;
 $config{password} = $config{password} ? xcrypt($config{password}, $user) : $config{password};
 
-
-$SIG{HUP} = $SIG{TERM} = $SIG{INT} = \&on_quit;
-
-my $ao = WWW::AOstat::NB::Glib->new();
-$ao->login($config{login}, $config{password}, sub {});
-
-my $glade  = Gtk2::GladeXML->new(GLADE);
-$glade->signal_autoconnect_from_package('main');
-
 my $online = -1;
 my $click  =  0;
 my $upd    =  0;
 
 # GUI DECLARATION
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+my $glade  = Gtk2::GladeXML->new(GLADE);
+$glade->signal_autoconnect_from_package('main');
+
 my $window = $glade->get_widget('window1');
 $window->set_icon_from_file(ICON_MAIN);
 
@@ -129,10 +124,16 @@ Gtk2::AboutDialog->set_url_hook(sub{});
 # TIMERS DECLARATION
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Glib::Timeout->add($config{int_update}*1000*60*60, \&on_checkupd);
-Glib::Timeout->add(10*1000, sub{ on_checkupd(); ao_stat_get(); return 0 });
+Glib::Timeout->add(10*1000, sub{ on_checkupd(); return 0 });
 Glib::Timeout->add(1*1000,  sub{ notify("Задайте логин и пароль от страницы статистики") unless $config{login} && $config{password}; return 0 });
 
+# START POINT
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+my $ao = WWW::AOstat::NB::Glib->new();
+$ao->login($config{login}, $config{password}, \&get_stat);
+
 Gtk2->main;
+
 
 # USER ACTIONS
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -228,19 +229,11 @@ sub on_click
 	{
 		$click = 0;
 		$tray_icon->set_from_file(ICON_WAIT);
-		$ao->turn(
-			!$online,
-			sub {
-				if ($_[0]) {
-					$online = !$online;
-					$tray_icon->set_from_file((tell_status($online))[0]);
-				}
-			}
-		)
+		$ao->turn(!$online, \&get_stat);
 	}
 	else
 	{
-		Glib::Timeout->add(250, \&single_click);
+		Glib::Timeout->add(250, \&on_single_click);
 	}
 }
 
@@ -266,7 +259,21 @@ sub on_checkupd
 	1;
 }
 
-sub ao_stat_get
+sub on_single_click
+{
+	if($click)
+	{
+		$click = 0;
+		$tray_icon->set_from_file(ICON_WAIT);
+		get_stat();
+	}
+	
+	return 0;
+}
+
+# HELP FUNCTIONS
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sub get_stat
 {
 	$ao->stat(
 		sub {
@@ -298,20 +305,6 @@ sub ao_stat_get
 			$upd = 0 if $upd > $config{period_notify}-1;
 		}
 	);
-}
-
-# HELP FUNCTIONS
-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-sub single_click
-{
-	if($click)
-	{
-		$click = 0;
-		$tray_icon->set_from_file(ICON_WAIT);
-		ao_stat_get();
-	}
-	
-	return 0;
 }
 
 sub put_file
