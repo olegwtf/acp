@@ -124,14 +124,16 @@ Gtk2::AboutDialog->set_url_hook(sub{});
 # TIMERS DECLARATION
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Glib::Timeout->add($config{int_update}*1000*60*60, \&on_checkupd);
-Glib::Timeout->add($config{stat_refresh}*1000*60, \&get_stat);
+Glib::Timeout->add($config{stat_refresh}*1000*60, \&on_get_stat);
 Glib::Timeout->add(10*1000, sub{ on_checkupd(); return 0 });
-Glib::Timeout->add(1*1000,  sub{ notify("Задайте логин и пароль от страницы статистики") unless $config{login} && $config{password}; return 0 });
+unless ($config{login} && $config{password}) {
+	Glib::Timeout->add(1*1000,  sub{ notify("Задайте логин и пароль от страницы статистики") && 0 });
+}
 
 # START POINT
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 my $ao = WWW::AOstat::NB::Glib->new();
-$ao->login($config{login}, $config{password}, $config{inet_enable} ? \&on_double_click : \&get_stat);
+$ao->login($config{login}, $config{password}, $config{inet_enable} ? \&on_double_click : \&on_get_stat);
 
 Gtk2->main;
 
@@ -142,6 +144,21 @@ sub on_delete
 {
 	$window->hide;
 	1;
+}
+
+sub on_show
+{
+	$window->show;
+}
+
+sub on_quit
+{
+	if ($config{inet_disable}) {
+		$ao->turn(0, \&Gtk2::main_quit);
+	}
+	else {
+		Gtk2->main_quit;
+	}
 }
 
 sub on_about
@@ -161,21 +178,6 @@ sub on_about
 	);
 }
 
-sub on_show
-{
-	$window->show;
-}
-
-sub on_quit
-{
-	if ($config{inet_disable}) {
-		$ao->turn(0, sub{ Gtk2->main_quit });
-	}
-	else {
-		Gtk2->main_quit;
-	}
-}
-
 sub on_save
 {
 	$s1_btn->set_sensitive(0);
@@ -184,7 +186,7 @@ sub on_save
 		$l_entry->get_text, $p_entry->get_text,
 		sub {
 			if (@_) {
-				get_stat();
+				on_get_stat();
 				
 				if(save_settings()) {
 					do "$acp_path/acp.conf";
@@ -250,7 +252,7 @@ sub on_single_click
 	{
 		$click = 0;
 		$tray_icon->set_from_file(ICON_WAIT);
-		get_stat();
+		on_get_stat();
 	}
 	
 	return 0;
@@ -260,7 +262,7 @@ sub on_double_click
 {
 	$tray_icon->set_from_file(ICON_WAIT);
 	$ao->{update} = 0; # prevent caching
-	$ao->turn($online <= 0, \&get_stat);
+	$ao->turn($online <= 0, \&on_get_stat);
 }
 
 sub on_checkupd
@@ -292,10 +294,7 @@ sub on_checkupd
 	1;
 }
 
-
-# HELP FUNCTIONS
-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-sub get_stat
+sub on_get_stat
 {
 	$ao->stat(
 		sub {
@@ -332,6 +331,8 @@ sub get_stat
 	1;
 }
 
+# HELP FUNCTIONS
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 sub put_file
 {
 	my ($file, $data, $mode) = @_;
