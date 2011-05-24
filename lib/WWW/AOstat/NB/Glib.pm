@@ -132,7 +132,7 @@ sub geturl
 			fileno($sock), 'out', \&_geturl_write_request,
 			[
 				$sock, $cb, $timer, \$watcher,
-				GET => $uri->path_query,
+				GET => $uri->path_query||'/',
 				$uri->host eq API_HOST ?
 					(Authorization => "Basic " . encode_base64($self->{login} . ':' . $self->{password}))
 					:
