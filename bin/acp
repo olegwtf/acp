@@ -406,8 +406,7 @@ sub tell_status
 sub date
 {
 	my ($sec, $min, $hour, $mday, $mon) = localtime;
-	
-	return sprintf('%02d', $mday).'.'.sprintf('%02d', ++$mon).' '.sprintf('%02d', $hour).':'.sprintf('%02d', $min).':'.sprintf('%02d', $sec);
+	return sprintf('%02d.%02d %02d:%02d:%02d', $mday, ++$mon, $hour, $min, $sec);
 }
 
 sub notify
