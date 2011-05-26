@@ -17,8 +17,8 @@ cp -R lib/WWW/* $tmp/usr/share/perl5/WWW || exit
 if [ "$1" != "--no-net-https-nb" ]
 then
 	mkdir -p $tmp/usr/share/perl5/Net/HTTPS || exit
-	wget -O- http://search.cpan.org/CPAN/authors/id/O/OL/OLEG/Net-HTTPS-NB-0.1.tar.gz |
-		tar -Oxvzf - Net-HTTPS-NB-0.1/lib/Net/HTTPS/NB.pm > $tmp/usr/share/perl5/Net/HTTPS/NB.pm || exit
+	wget -O- http://search.cpan.org/CPAN/authors/id/O/OL/OLEG/Net-HTTPS-NB-0.11.tar.gz |
+		tar -Oxvzf - Net-HTTPS-NB-0.11/lib/Net/HTTPS/NB.pm > $tmp/usr/share/perl5/Net/HTTPS/NB.pm || exit
 fi
 
 size=`du -ks $tmp/usr/ | cut -f1`
