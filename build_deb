@@ -30,7 +30,7 @@ Version: $version
 Architecture: all
 Maintainer: Oleg G <verdrehung@gmail.com>
 Installed-Size: $size
-Depends: perl, libgtk2-perl, libgtk2-notify-perl, libgtk2-gladexml-perl, libio-socket-ssl-perl, liburi-perl, libnet-http-perl | libwww-perl
+Depends: perl, libgtk2-perl, libgtk2-notify-perl, libgtk2-gladexml-perl, libio-socket-ssl-perl, liburi-perl, libnet-dns-perl, libnet-http-perl | libwww-perl
 Section: perl
 Priority: optional
 Description: ACP - Academ.org Control Panel for Linux
