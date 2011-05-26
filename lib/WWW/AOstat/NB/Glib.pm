@@ -5,6 +5,7 @@ use IO::Socket::SSL;
 use MIME::Base64;
 use Digest::MD5;
 use URI;
+use Net::DNS;
 use Net::HTTP::NB;
 use Net::HTTPS::NB;
 use Glib;
@@ -22,14 +23,16 @@ sub new
 	my ($class, $timeout) = @_;
 	
 	my $self = {
-			login    => '',
-			password => '',
-			uid      => '',
-			page     => '',
-			update   => 0,
-			timeout  => $timeout || 30,
+			login     => '',
+			password  => '',
+			uid       => '',
+			page      => '',
+			update    => 0,
+			timeout   => $timeout || 30,
+			resolver  => Net::DNS::Resolver->new(),
+			dns_cache => {}, # XXX: should we periodically clean the cache?
 	};
-		
+	
 	bless $self, $class;
 }
 
@@ -117,29 +120,36 @@ sub geturl
 {
 	my ($self, $url, $cb) = @_;
 	
-	my $uri = URI->new($url);
-	eval { # URI may break because of the bad url
-		my $class = $uri->scheme eq 'http' ? 'Net::HTTP::NB' : 'Net::HTTPS::NB';
-		my $sock = $class->new(Host => $uri->host, PeerPort => $uri->port, Blocking => 0); # FIXME make non-blocking host resolving with Net::DNS
-		
+	my $timer;
+	eval {
+		my $uri = URI->new($url);
 		my $watcher;
-		my $timer = Glib::Timeout->add(
+		
+		$timer = Glib::Timeout->add(
 			$self->{timeout}*1000, \&_geturl_timeout,
 			[ $cb, \$watcher ]
 		);
 		
-		$watcher = Glib::IO->add_watch(
-			fileno($sock), 'out', \&_geturl_write_request,
-			[
-				$sock, $cb, $timer, \$watcher,
-				GET => $uri->path_query||'/',
-				$uri->host eq API_HOST ?
-					(Authorization => "Basic " . encode_base64($self->{login} . ':' . $self->{password}))
-					:
-					()
-			]
-		);
-	} or $cb->();
+		if (exists $self->{dns_cache}{$uri->host}) {
+			_geturl_resolve(undef, undef, [$self, undef, $cb, $timer, \$watcher, $uri]);
+		}
+		else {
+			my $dns_sock = $self->{resolver}->bgsend($uri->host)
+				or die $self->{resolver}->errorstring;
+			$watcher = Glib::IO->add_watch(
+				fileno($dns_sock), 'in', \&_geturl_resolve,
+				[
+					$self, $dns_sock, $cb, $timer, \$watcher,
+					$uri
+				]
+			);
+		}
+		
+		1;
+	} or do {
+		Glib::Source->remove($timer) if $timer;
+		$cb->();
+	};
 	
 	1;
 }
@@ -152,6 +162,57 @@ sub _geturl_timeout
 	$cb->();
 	
 	0;
+}
+
+sub _geturl_resolve
+{
+	my ($fd, $cond) = splice @_, 0, 2;
+	my ($self, $dns_sock, $cb, $timer, $watcher, $uri) = @{$_[0]};
+	
+	eval {
+		my $ip;
+		if (defined $fd) {
+			my $packet = $self->{resolver}->bgread($dns_sock)
+				or die $self->{resolver}->errorstring;
+			
+			foreach my $record ($packet->answer) {
+				if ($record->type eq 'A') {
+					$ip = $record->address;
+					last;
+				}
+			}
+			
+			$dns_sock->close();
+			if ($ip) {
+				$self->{dns_cache}{$uri->host} = $ip;
+			}
+		}
+		else {
+			$ip = $self->{dns_cache}{$uri->host};
+		}
+		
+		my $class = $uri->scheme eq 'http' ? 'Net::HTTP::NB' : 'Net::HTTPS::NB';
+		my $sock = $class->new(Host => $uri->host, PeerHost => $ip, PeerPort => $uri->port, Blocking => 0)
+			or die $@;
+		
+		$$watcher = Glib::IO->add_watch(
+			fileno($sock), 'out', \&_geturl_write_request,
+			[
+				$sock, $cb, $timer, $watcher,
+				GET => $uri->path_query||'/',
+				$uri->host eq API_HOST ?
+					(Authorization => "Basic " . encode_base64($self->{login} . ':' . $self->{password}))
+					:
+					()
+			]
+		);
+	} or do {
+		Glib::Source->remove($timer);
+		Glib::Source->remove($$watcher);
+		$cb->();
+	};
+	
+	return;
 }
 
 sub _geturl_write_request
