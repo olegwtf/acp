@@ -1,7 +1,6 @@
 package WWW::AOstat::NB::Glib;
 
 use strict;
-use IO::Socket::SSL;
 use MIME::Base64;
 use Digest::MD5;
 use URI;
