@@ -227,6 +227,7 @@ sub on_showlog
 	my $log = get_file("$acp_path/acp.log");
 	$buffer->set_text($log);
 	my $textview = Gtk2::TextView->new_with_buffer($buffer);
+	$textview->set_editable(0);
 	
 	$scrolled->add($textview);
 	$window->show_all;
