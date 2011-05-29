@@ -54,8 +54,12 @@ sub login
 				$cb->($uid);
 			}
 			else {
-				$self->{login} = $self->{tmp_login};
-				$self->{password} = $self->{tmp_password};
+				if($self->{tmp_login} && $self->{tmp_password}) {
+					# reset to old values after unsuccessfull login
+					# only if we have old values
+					$self->{login} = $self->{tmp_login};
+					$self->{password} = $self->{tmp_password};
+				}
 				$cb->();
 			}
 		}
