@@ -13,6 +13,7 @@ cp share/* $tmp/usr/share/apps/acp || exit
 
 mkdir -p $tmp/usr/share/perl5/WWW || exit
 cp -R lib/WWW/* $tmp/usr/share/perl5/WWW || exit
+sed -nri '1h;1!H;${;g;s/\s*^[^\n]*\bDEBUG\b[^\n]*//g;p;}' $tmp/usr/share/perl5/WWW/AOstat/NB/Glib.pm # remove DEBUG
 
 if [ "$1" != "--no-net-https-nb" ]
 then
