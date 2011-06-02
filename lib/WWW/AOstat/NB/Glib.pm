@@ -9,6 +9,8 @@ use Net::HTTP::NB;
 use Net::HTTPS::NB;
 use Glib;
 
+use constant DEBUG => $ENV{ACP_DEBUG};
+
 our $VERSION = 0.01;
 
 use constant {
@@ -75,6 +77,7 @@ sub stat
 	my $sub = sub {
 		return $cb->() if index($_[0], 'ERR=0') == -1;
 		
+		($self->{uid}) = $_[0] =~ /USERID=(\d+)/ unless $self->{uid};
 		my ($traff) = $_[0] =~ /REMAINS_MB=(-?\d+)/;
 		my ($money) = $_[0] =~ /REMAINS_RUR=(-?\d+(?:.\d{1,2})?)/;
 		my ($cred_sum, $cred_time) = $_[0] =~ /CREDIT=(\d+);(\d+)/;
@@ -122,6 +125,7 @@ sub turn
 sub geturl
 {
 	my ($self, $url, $cb) = @_;
+	DEBUG && warn "${\(time)} geturl($self, $url, $cb)";
 	
 	my $timer;
 	eval {
@@ -134,6 +138,7 @@ sub geturl
 		);
 		
 		if (exists $self->{dns_cache}{$uri->host}) {
+			DEBUG && warn "${\(time)} already resolved: $self->{dns_cache}{$uri->host}";
 			_geturl_resolve(undef, undef, [$self, undef, $cb, $timer, \$watcher, $uri]);
 		}
 		else {
@@ -150,6 +155,7 @@ sub geturl
 		
 		1;
 	} or do {
+		DEBUG && warn "${\(time)} Error: $@";
 		Glib::Source->remove($timer) if $timer;
 		$cb->();
 	};
@@ -160,6 +166,7 @@ sub geturl
 sub _geturl_timeout
 {
 	my ($cb, $watcher) = @{$_[0]};
+	DEBUG && warn "${\(time)} _geturl_timeout($cb, $watcher)";
 	
 	Glib::Source->remove($$watcher);
 	$cb->();
@@ -171,6 +178,7 @@ sub _geturl_resolve
 {
 	my ($fd, $cond) = splice @_, 0, 2;
 	my ($self, $dns_sock, $cb, $timer, $watcher, $uri) = @{$_[0]};
+	DEBUG && warn "${\(time)} _geturl_resolve($self, $dns_sock, $cb, $timer, $watcher, $uri)";
 	
 	eval {
 		my $ip;
@@ -193,6 +201,7 @@ sub _geturl_resolve
 		else {
 			$ip = $self->{dns_cache}{$uri->host};
 		}
+		DEBUG && warn "${\(time)} ip: $ip";
 		
 		my $class = $uri->scheme eq 'http' ? 'Net::HTTP::NB' : 'Net::HTTPS::NB';
 		my $sock = $class->new(Host => $uri->host, PeerHost => $ip, PeerPort => $uri->port, Blocking => 0)
@@ -210,6 +219,7 @@ sub _geturl_resolve
 			]
 		);
 	} or do {
+		DEBUG && warn "${\(time)} Error: $@";
 		Glib::Source->remove($timer);
 		Glib::Source->remove($$watcher);
 		$cb->();
@@ -222,6 +232,7 @@ sub _geturl_write_request
 {
 	my ($fd, $cond) = splice @_, 0, 2;
 	my ($sock, $cb, $timer, $watcher) = splice @{$_[0]}, 0, 4;
+	DEBUG && warn "${\(time)} _geturl_write_request($sock, $cb, $timer, $watcher)";
 	
 	if ($sock->isa('Net::HTTPS::NB') && !$sock->connected) {
 		unshift @{$_[0]}, $sock, $cb, $timer, $watcher;
@@ -244,6 +255,7 @@ sub _geturl_write_request
 		}
 	}
 	else {
+		DEBUG && warn "${\(time)} connected";
 		if ($sock->write_request(@{$_[0]})) {
 			$$watcher = Glib::IO->add_watch(
 				$fd, 'in', \&_geturl_read_response_headers,
@@ -263,8 +275,9 @@ sub _geturl_read_response_headers
 {
 	my ($fd, $cond) = splice @_, 0, 2;
 	my ($sock, $cb, $timer, $watcher) = @{$_[0]};
+	DEBUG && warn "${\(time)} _geturl_read_response_headers($sock, $cb, $timer, $watcher)";
 	
-	eval {
+	my $rv = eval {
 		$sock->read_response_headers()
 			or return 1; # no headers yet
 			             # continue watching
@@ -274,31 +287,36 @@ sub _geturl_read_response_headers
 			$fd, 'in', \&_geturl_read_response_body,
 			[$sock, $cb, $timer, \$page]
 		);
+		
+		0; # remove watcher
 	};
 	if ($@) {
+		DEBUG && warn "${\(time)} Error: $@";
 		Glib::Source->remove($timer);
 		$cb->();
 	}
 	
-	return; # remove watcher
+	return $rv;
 }
 
 sub _geturl_read_response_body
 {
 	my ($fd, $cond) = splice @_, 0, 2;
 	my ($sock, $cb, $timer, $page) = @{$_[0]};
+	DEBUG && warn "${\(time)} _geturl_read_response_body($sock, $cb, $timer, $page)";
 	
 	eval {
 		my $n = $sock->read_entity_body(my $buf, 1024)
-			or die 'No data received';
+			or die 'Not error';
 	
 		substr($$page, length $$page) = $buf
 			unless $n == -1;
 	};
 	if ($@) {
+		DEBUG && warn "${\(time)} Error: $@";
 		Glib::Source->remove($timer);
 		$cb->($$page);
-		return;
+		return; # remove watcher
 	}
 	
 	1;
